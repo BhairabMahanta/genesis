@@ -8,7 +8,6 @@
   ],
   "scripts": {
     "dev": "pnpm --filter @genesis/web dev",
-    "dev:mock": "pnpm --filter @genesis/web dev:mock",
     "dev:api": "pnpm --filter @genesis/api dev",
     "dev:all": "pnpm --filter \"@genesis/*\" dev",
     "build": "pnpm --filter \"@genesis/*\" build",

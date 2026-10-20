@@ -30,11 +30,12 @@ export function WorkspaceCard({ workspace }: WorkspaceCardProps) {
     return format(date, 'MMM d, yyyy');
   };
 
-  // Mock annotator initials for collaboration feel
-  const annotators = [
-    { name: 'Alex Rivera', initials: 'AR', bg: 'bg-indigo-600' },
-    { name: 'Sarah Chen', initials: 'SC', bg: 'bg-emerald-600' },
-  ];
+  const ownerInitials = workspace.ownerUsername
+    .split(/[\s_.-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('') || 'U';
 
   return (
     <motion.div
@@ -130,18 +131,16 @@ export function WorkspaceCard({ workspace }: WorkspaceCardProps) {
         </div>
 
         <div className="flex items-center justify-between pt-1">
-          {/* Team stack */}
-          <div className="flex items-center -space-x-1.5">
-            {annotators.map((ann, i) => (
-              <Avatar
-                key={i}
-                className="w-6 h-6 border-2 border-white dark:border-slate-900 text-[9px] font-bold"
-              >
-                <AvatarFallback className={`${ann.bg} text-white`}>
-                  {ann.initials}
-                </AvatarFallback>
-              </Avatar>
-            ))}
+          {/* Owner */}
+          <div className="flex items-center">
+            <Avatar
+              className="w-6 h-6 border-2 border-white dark:border-slate-900 text-[9px] font-bold"
+              title={workspace.ownerUsername}
+            >
+              <AvatarFallback className="bg-indigo-600 text-white">
+                {ownerInitials}
+              </AvatarFallback>
+            </Avatar>
             <span className="text-[11px] text-slate-400 pl-2.5 flex items-center gap-1">
               <Clock className="w-3 h-3" />
               {formatLastUpdated(workspace.updatedAt)}

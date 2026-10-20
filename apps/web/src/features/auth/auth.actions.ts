@@ -3,7 +3,7 @@
 import { cookies } from 'next/headers';
 import type { ApiResponse, ActionResult } from '@/server/contracts/common';
 import { SessionExpiredError } from '@/server/errors';
-import { IS_MOCK_MODE, SERVER_API_BASE_URL } from '@/config/env';
+import { SERVER_API_BASE_URL } from '@/config/env';
 import {
   ACCESS_COOKIE,
   REFRESH_COOKIE,
@@ -17,23 +17,10 @@ import type {
   TokenResponse,
   UserResponse,
 } from './auth.contracts';
-import { MOCK_USER } from '@/server/mock-data';
 
 export async function loginAction(
   request: LoginRequest,
 ): Promise<ActionResult<TokenResponse>> {
-  if (IS_MOCK_MODE) {
-    return {
-      ok: true,
-      data: {
-        accessToken: 'mock-token',
-        refreshToken: 'mock-refresh',
-        tokenType: 'Bearer',
-        expiresIn: 86400,
-      },
-    };
-  }
-
   let response: Response;
   try {
     response = await fetch(`${SERVER_API_BASE_URL}/api/auth/login`, {
@@ -58,10 +45,6 @@ export async function loginAction(
 export async function signupAction(
   request: SignupRequest,
 ): Promise<ActionResult<UserResponse>> {
-  if (IS_MOCK_MODE) {
-    return { ok: true, data: MOCK_USER };
-  }
-
   let response: Response;
   try {
     response = await fetch(`${SERVER_API_BASE_URL}/api/auth/signup`, {
@@ -103,10 +86,6 @@ export async function signupAction(
  * caller can keep the current session optimistically.
  */
 export async function getSessionAction(): Promise<ActionResult<UserResponse | null>> {
-  if (IS_MOCK_MODE) {
-    return { ok: true, data: MOCK_USER };
-  }
-
   try {
     const result = await serverFetch<ApiResponse<UserResponse>>('/api/auth/me');
     return { ok: true, data: result.data };
@@ -127,10 +106,6 @@ export async function getSessionAction(): Promise<ActionResult<UserResponse | nu
  * the consumer side (no localStorage), and is short-lived (minutes).
  */
 export async function getAccessTokenAction(): Promise<ActionResult<string | null>> {
-  if (IS_MOCK_MODE) {
-    return { ok: true, data: 'mock-access-token' };
-  }
-
   try {
     const jar = await cookies();
     return { ok: true, data: jar.get(ACCESS_COOKIE)?.value ?? null };
@@ -140,10 +115,6 @@ export async function getAccessTokenAction(): Promise<ActionResult<string | null
 }
 
 export async function logoutAction(): Promise<{ ok: true }> {
-  if (IS_MOCK_MODE) {
-    return { ok: true };
-  }
-
   const jar = await cookies();
   const refreshToken = jar.get(REFRESH_COOKIE)?.value;
 

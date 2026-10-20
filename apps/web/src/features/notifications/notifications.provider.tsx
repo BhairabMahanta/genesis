@@ -12,7 +12,6 @@ import {
   markNotificationAsReadAction,
 } from '@/features/notifications/notifications.actions';
 import { useAuth } from '@/features/auth/auth.provider';
-import { IS_MOCK_MODE } from '@/config/env';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
@@ -54,7 +53,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     // WebSocket Connection
     useEffect(() => {
-        if (IS_MOCK_MODE || !isAuthenticated || !user) {
+        if (!isAuthenticated || !user) {
             if (stompClient) {
                 stompClient.deactivate();
                 setStompClient(null);
@@ -79,7 +78,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
             const socketUrl = `${API_BASE_URL}/ws`;
 
             client = new Client({
-                webSocketFactory: () => new SockJS(socketUrl),
+                webSocketFactory: () => new SockJS(socketUrl, undefined, { transports: ['xhr-polling'] }),
                 connectHeaders: {
                     Authorization: `Bearer ${accessToken}`,
                 },

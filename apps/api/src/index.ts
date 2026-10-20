@@ -1,11 +1,14 @@
-import { UserRole } from "@genesis/contracts";
+import { serve } from "@hono/node-server";
+import { config } from "./config.js";
+import app from "./app.js";
 
-console.log("Genesis TypeScript API Service initializing...");
+/**
+ * Process entry point. The Hono app itself lives in `app.ts` so integration
+ * tests can exercise routes without binding a port.
+ */
 
-export function getStatus() {
-  return {
-    status: "ok",
-    service: "genesis-api",
-    timestamp: new Date().toISOString(),
-  };
-}
+serve({ fetch: app.fetch, port: config.port }, (info) => {
+  console.log(`Genesis TypeScript API listening on http://localhost:${info.port}`);
+});
+
+export default app;

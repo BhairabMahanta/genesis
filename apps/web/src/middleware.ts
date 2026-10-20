@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { IS_MOCK_MODE, SERVER_API_BASE_URL } from '@/config/env';
+import { SERVER_API_BASE_URL } from '@/config/env';
 import {
   ACCESS_COOKIE,
   REFRESH_COOKIE,
@@ -11,7 +11,7 @@ import {
 // passes through; this is the primary route guard (the editor pages also
 // re-check server-side when serverFetch hits a 401).
 // `/api/export` is included so proactive refresh runs before the route
-// handler proxies the blob download to Spring.
+// handler proxies the blob download.
 const PROTECTED_PREFIXES = ['/home', '/workspace', '/api/export'];
 
 // Routes that should redirect to /home when the user already has a session.
@@ -23,16 +23,6 @@ const matches = (path: string, prefixes: string[]) =>
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // In Mock Mode, bypass auth redirects and go directly to /home
-  if (IS_MOCK_MODE) {
-    if (matches(pathname, GUEST_ONLY_PREFIXES)) {
-      const url = request.nextUrl.clone();
-      url.pathname = '/home';
-      return NextResponse.redirect(url);
-    }
-    return NextResponse.next();
-  }
-
   const hasAccess = request.cookies.has(ACCESS_COOKIE);
   const refreshToken = request.cookies.get(REFRESH_COOKIE)?.value;
   const isProtected = matches(pathname, PROTECTED_PREFIXES);
@@ -40,7 +30,7 @@ export async function middleware(request: NextRequest) {
 
   // Proactive refresh: access TTL is short, refresh TTL is 30 days. When the
   // access cookie has expired but refresh is still alive, swap tokens here
-  // — middleware is the only pre-render place that can both call Spring and
+  // — middleware is the only pre-render place that can both call the API and
   // mutate cookies.
   if (isProtected && !hasAccess && refreshToken) {
     let refreshResponse: Response | null = null;
@@ -51,7 +41,7 @@ export async function middleware(request: NextRequest) {
         body: JSON.stringify({ refreshToken }),
       });
     } catch {
-      // Spring unreachable. Send to login; cookies stay so a retry can
+      // API unreachable. Send to login; cookies stay so a retry can
       // refresh once the backend is back.
       const url = request.nextUrl.clone();
       url.pathname = '/login';

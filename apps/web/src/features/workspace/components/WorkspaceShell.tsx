@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Download, LogOut, Play, Settings, Tag, Upload, User } from 'lucide-react';
@@ -68,6 +68,14 @@ export function WorkspaceShell({
   const [workspace, setWorkspace] = useState<WorkspaceResponse>(initialWorkspace);
   const [documents, setDocuments] = useState<DocumentResponse[]>(initialDocuments);
   const [members, setMembers] = useState<MemberResponse[]>(initialMembers);
+
+  // router.refresh() re-renders the RSC but preserves client state, so mirror
+  // refreshed server props into local state (upload/delete counts and lists).
+  useEffect(() => {
+    setWorkspace(initialWorkspace);
+    setDocuments(initialDocuments);
+    setMembers(initialMembers);
+  }, [initialWorkspace, initialDocuments, initialMembers]);
 
   const currentUserRole = members.find(m => m.userId === user?.id)?.role;
   const isAdmin = currentUserRole === 'ADMIN';
@@ -167,6 +175,10 @@ export function WorkspaceShell({
       toast.error('Failed to delete document.');
       return;
     }
+    setWorkspace(prev => ({
+      ...prev,
+      documentCount: Math.max(0, prev.documentCount - 1),
+    }));
     // Document counts on the workspace change; re-render the RSC.
     router.refresh();
   };
@@ -195,7 +207,18 @@ export function WorkspaceShell({
       toast.error('Failed to upload document.');
       return;
     }
-    // Re-render the RSC so documents + workspace counts refresh.
+    if (result.data) {
+      const uploaded = result.data;
+      setDocuments(prev =>
+        prev.some(doc => doc.id === uploaded.id) ? prev : [uploaded, ...prev],
+      );
+      setWorkspace(prev => ({
+        ...prev,
+        documentCount: prev.documentCount + 1,
+        updatedAt: new Date().toISOString(),
+      }));
+    }
+    // Re-render the RSC so workspace counts refresh.
     router.refresh();
   };
 

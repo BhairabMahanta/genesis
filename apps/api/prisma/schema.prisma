@@ -1,0 +1,450 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                        String                      @id @default(uuid()) @db.Uuid
+  createdAt                 DateTime                    @map("created_at") @db.Timestamptz(6)
+  createdBy                 String                      @map("created_by") @db.VarChar(255)
+  updatedAt                 DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy                 String                      @map("updated_by") @db.VarChar(255)
+  version                   BigInt?
+  accountLocked             Boolean                     @map("account_locked")
+  authProvider              String                      @map("auth_provider") @db.VarChar(20)
+  email                     String                      @unique(map: "uk6dotkott2kjsp8vw4d0m25fb7") @db.VarChar(255)
+  emailVerified             Boolean                     @map("email_verified")
+  enabled                   Boolean
+  firstName                 String                      @map("first_name") @db.VarChar(100)
+  lastLoginAt               DateTime?                   @map("last_login_at") @db.Timestamptz(6)
+  lastName                  String                      @map("last_name") @db.VarChar(100)
+  organizationName          String?                     @map("organization_name") @db.VarChar(255)
+  password                  String                      @db.VarChar(255)
+  providerId                String?                     @map("provider_id") @db.VarChar(255)
+  username                  String                      @unique(map: "ukr43af9ap4edm43mmtq01oddj6") @db.VarChar(50)
+  dismissed_recommendations dismissed_recommendations[]
+  editor_sessions           editor_sessions[]
+  notifications             notifications[]
+  refreshTokens             RefreshToken[]
+  memberships               WorkspaceMember[]
+  workspaces                Workspace[]                 @relation("WorkspaceOwner")
+
+  @@index([email], map: "idx_users_email")
+  @@index([username], map: "idx_users_username")
+  @@map("users")
+}
+
+model RefreshToken {
+  id         String   @id @default(uuid()) @db.Uuid
+  createdAt  DateTime @map("created_at") @db.Timestamptz(6)
+  created_by String   @db.VarChar(255)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updated_by String   @db.VarChar(255)
+  version    BigInt?
+  expiryDate DateTime @map("expiry_date") @db.Timestamptz(6)
+  revoked    Boolean
+  token      String   @unique(map: "ukghpmfn23vmxfu3spu3lfg4r2d") @db.VarChar(500)
+  userId     String   @map("user_id") @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk1lih5y2npsf8u5o3vhdb9y0os")
+
+  @@index([token], map: "idx_refresh_tokens_token")
+  @@index([userId], map: "idx_refresh_tokens_user_id")
+  @@map("refresh_tokens")
+}
+
+model Workspace {
+  id                        String                      @id @default(uuid()) @db.Uuid
+  createdAt                 DateTime                    @map("created_at") @db.Timestamptz(6)
+  createdBy                 String                      @map("created_by") @db.VarChar(255)
+  updatedAt                 DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy                 String                      @map("updated_by") @db.VarChar(255)
+  version                   BigInt?
+  annotationType            String                      @map("annotation_type") @db.VarChar(20)
+  description               String?
+  name                      String                      @db.VarChar(100)
+  status                    String                      @db.VarChar(20)
+  ownerId                   String                      @map("owner_id") @db.Uuid
+  annotation_log            annotation_log[]
+  coref_clusters            coref_clusters[]
+  coref_mentions            coref_mentions[]
+  dismissed_recommendations dismissed_recommendations[]
+  documents                 Document[]
+  editor_sessions           editor_sessions[]
+  notifications             notifications[]
+  members                   WorkspaceMember[]
+  owner                     User                        @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk58ks96jjlsbhsh21cen7hr59h")
+  wsd_annotation            wsd_annotation[]
+  wsd_sense                 wsd_sense[]
+
+  @@index([ownerId], map: "idx_workspaces_owner_id")
+  @@index([status], map: "idx_workspaces_status")
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String    @id @default(uuid()) @db.Uuid
+  createdAt   DateTime  @map("created_at") @db.Timestamptz(6)
+  created_by  String    @db.VarChar(255)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updated_by  String    @db.VarChar(255)
+  version     BigInt?
+  role        String    @db.VarChar(20)
+  userId      String    @map("user_id") @db.Uuid
+  workspaceId String    @map("workspace_id") @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk6vtnpc3eexk504u61uepn40p1")
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fkw9hq87n3rvq2c4j47qo78i5r")
+
+  @@unique([workspaceId, userId], map: "uk_workspace_members_workspace_user")
+  @@index([role], map: "idx_workspace_members_role")
+  @@index([userId], map: "idx_workspace_members_user_id")
+  @@index([workspaceId], map: "idx_workspace_members_workspace_id")
+  @@map("workspace_members")
+}
+
+model StoredFile {
+  id               String    @id @default(uuid()) @db.Uuid
+  createdAt        DateTime  @map("created_at") @db.Timestamptz(6)
+  created_by       String    @db.VarChar(255)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updated_by       String    @db.VarChar(255)
+  version          BigInt?
+  contentType      String?   @map("content_type") @db.VarChar(255)
+  fileSize         BigInt?   @map("file_size")
+  folder           String?   @db.VarChar(255)
+  format           String?   @db.VarChar(255)
+  originalFilename String    @map("original_filename") @db.VarChar(255)
+  publicId         String    @unique(map: "ukj6q2r19h9ywnu08womnhs6f4y") @map("public_id") @db.VarChar(255)
+  resourceType     String?   @map("resource_type") @db.VarChar(255)
+  url              String    @db.VarChar(1024)
+  document         Document?
+
+  @@map("stored_files")
+}
+
+model Document {
+  id               String            @id @default(uuid()) @db.Uuid
+  createdAt        DateTime          @map("created_at") @db.Timestamptz(6)
+  createdBy        String            @map("created_by") @db.VarChar(255)
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy        String            @map("updated_by") @db.VarChar(255)
+  version          BigInt?
+  fileSize         BigInt?           @map("file_size")
+  name             String            @db.VarChar(255)
+  orderIndex       Int               @map("order_index")
+  processingError  String?           @map("processing_error") @db.VarChar(1000)
+  processingStatus String?           @map("processing_status") @db.VarChar(20)
+  progress         Float?
+  status           String            @db.VarChar(20)
+  tokenEndIndex    Int?              @map("token_end_index")
+  tokenStartIndex  Int?              @map("token_start_index")
+  storedFileId     String?           @unique(map: "uk3rwx6vb7lrr50dd93wemwfqm7") @map("stored_file_id") @db.Uuid
+  workspaceId      String            @map("workspace_id") @db.Uuid
+  coref_mentions   coref_mentions[]
+  storedFile       StoredFile?       @relation(fields: [storedFileId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk8qahhj9hi2hsa6vnsf5x4mke")
+  workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fkp8lrsv9kvf60o04juy6uj3c1j")
+  ner_annotations  ner_annotations[]
+  pos_annotations  pos_annotations[]
+  sentences        Sentence[]
+  tokens           Token[]
+  wsd_annotation   wsd_annotation[]
+
+  @@index([workspaceId, orderIndex], map: "idx_documents_order_index")
+  @@index([status], map: "idx_documents_status")
+  @@map("documents")
+}
+
+model Sentence {
+  id            String   @id @default(uuid()) @db.Uuid
+  createdAt     DateTime @map("created_at") @db.Timestamptz(6)
+  created_by    String   @db.VarChar(255)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updated_by    String   @db.VarChar(255)
+  version       BigInt?
+  documentId    String   @map("document_id") @db.Uuid
+  endOffset     Int      @map("end_offset")
+  sentenceIndex Int      @map("sentence_index")
+  startOffset   Int      @map("start_offset")
+  text          String?
+  tokenCount    Int?     @map("token_count")
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_sentence_document")
+
+  @@index([documentId], map: "idx_sentence_document")
+  @@index([documentId, sentenceIndex], map: "idx_sentence_document_index")
+  @@map("sentences")
+}
+
+model Token {
+  id              String            @id @default(uuid()) @db.Uuid
+  createdAt       DateTime          @map("created_at") @db.Timestamptz(6)
+  created_by      String            @db.VarChar(255)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updated_by      String            @db.VarChar(255)
+  version         BigInt?
+  documentId      String            @map("document_id") @db.Uuid
+  endOffset       Int               @map("end_offset")
+  form            String            @db.VarChar(500)
+  globalIndex     Int               @map("global_index")
+  lemma           String?           @db.VarChar(500)
+  nerTag          String?           @map("ner_tag") @db.VarChar(100)
+  pos             String?           @db.VarChar(20)
+  sentenceIndex   Int               @map("sentence_index")
+  startOffset     Int               @map("start_offset")
+  tokenIndex      Int               @map("token_index")
+  pos_annotations pos_annotations[]
+  document        Document          @relation(fields: [documentId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_token_document")
+  wsd_annotation  wsd_annotation[]
+
+  @@index([documentId], map: "idx_token_document")
+  @@index([documentId, sentenceIndex], map: "idx_token_document_sentence")
+  @@index([documentId, globalIndex], map: "idx_token_global")
+  @@map("tokens")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model annotation_log {
+  id           String    @id @db.Uuid
+  created_at   DateTime  @db.Timestamptz(6)
+  created_by   String    @db.VarChar(255)
+  updated_at   DateTime  @db.Timestamptz(6)
+  updated_by   String    @db.VarChar(255)
+  version      BigInt?
+  action_type  String    @db.VarChar(30)
+  entity_id    String?   @db.Uuid
+  payload_json String?
+  timestamp    DateTime  @db.Timestamptz(6)
+  user_id      String    @db.VarChar(100)
+  workspace_id String    @db.Uuid
+  workspaces   Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_log_workspace")
+
+  @@index([action_type], map: "idx_log_action_type")
+  @@index([workspace_id, timestamp], map: "idx_log_workspace_timestamp")
+  @@index([workspace_id, user_id], map: "idx_log_workspace_user")
+}
+
+model coref_clusters {
+  id                  String           @id @db.Uuid
+  created_at          DateTime         @db.Timestamptz(6)
+  created_by          String           @db.VarChar(255)
+  updated_at          DateTime         @db.Timestamptz(6)
+  updated_by          String           @db.VarChar(255)
+  version             BigInt?
+  cluster_number      Int
+  color               String?          @db.VarChar(20)
+  label               String?          @db.VarChar(500)
+  mention_count       Int?
+  representative_text String?          @db.VarChar(1000)
+  workspace_id        String           @db.Uuid
+  workspaces          Workspace        @relation(fields: [workspace_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_cluster_workspace")
+  coref_mentions      coref_mentions[]
+
+  @@unique([workspace_id, cluster_number], map: "idx_cluster_workspace_number")
+  @@index([workspace_id], map: "idx_cluster_workspace")
+}
+
+model coref_mentions {
+  id                 String          @id @db.Uuid
+  created_at         DateTime        @db.Timestamptz(6)
+  created_by         String          @db.VarChar(255)
+  updated_at         DateTime        @db.Timestamptz(6)
+  updated_by         String          @db.VarChar(255)
+  version            BigInt?
+  cluster_id         String?         @db.Uuid
+  document_id        String          @db.Uuid
+  end_token_index    Int
+  global_end_index   Int?
+  global_start_index Int?
+  mention_type       String?         @db.VarChar(50)
+  sentence_index     Int
+  start_token_index  Int
+  text               String?         @db.VarChar(2000)
+  workspace_id       String          @db.Uuid
+  coref_clusters     coref_clusters? @relation(fields: [cluster_id], references: [id], onUpdate: NoAction, map: "fk_mention_cluster")
+  documents          Document        @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_mention_document")
+  workspaces         Workspace       @relation(fields: [workspace_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_mention_workspace")
+
+  @@index([cluster_id], map: "idx_mention_cluster")
+  @@index([document_id, sentence_index], map: "idx_mention_doc_sentence")
+  @@index([document_id], map: "idx_mention_document")
+  @@index([workspace_id], map: "idx_mention_workspace")
+}
+
+model dismissed_recommendations {
+  id                  String     @id @db.Uuid
+  created_at          DateTime   @db.Timestamptz(6)
+  created_by          String     @db.VarChar(255)
+  updated_at          DateTime   @db.Timestamptz(6)
+  updated_by          String     @db.VarChar(255)
+  version             BigInt?
+  accepted            Boolean
+  accepted_at         DateTime?  @db.Timestamptz(6)
+  dismissed_at        DateTime   @db.Timestamptz(6)
+  recommendation_hash String     @db.VarChar(64)
+  user_id             String     @db.Uuid
+  workspace_id        String?    @db.Uuid
+  users               User       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_dismissed_user")
+  workspaces          Workspace? @relation(fields: [workspace_id], references: [id], onUpdate: NoAction, map: "fk_dismissed_workspace")
+
+  @@unique([user_id, recommendation_hash], map: "idx_dismissed_user_hash")
+  @@index([workspace_id], map: "idx_dismissed_workspace")
+}
+
+model editor_sessions {
+  id                  String    @id @db.Uuid
+  created_at          DateTime  @db.Timestamptz(6)
+  created_by          String    @db.VarChar(255)
+  updated_at          DateTime  @db.Timestamptz(6)
+  updated_by          String    @db.VarChar(255)
+  version             BigInt?
+  last_accessed_at    DateTime  @db.Timestamptz(6)
+  last_document_index Int?
+  scroll_position     Int?
+  user_id             String    @db.Uuid
+  workspace_id        String    @db.Uuid
+  users               User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_editor_user")
+  workspaces          Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_editor_workspace")
+
+  @@unique([workspace_id, user_id], map: "idx_editor_sessions_workspace_user")
+  @@index([last_accessed_at], map: "idx_editor_sessions_last_accessed")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model ner_annotations {
+  id                String   @id @db.Uuid
+  created_at        DateTime @db.Timestamptz(6)
+  created_by        String   @db.VarChar(255)
+  updated_at        DateTime @db.Timestamptz(6)
+  updated_by        String   @db.VarChar(255)
+  version           BigInt?
+  annotator_id      String   @db.VarChar(100)
+  document_id       String   @db.Uuid
+  start_token_index Int
+  end_token_index   Int
+  label             String   @db.VarChar(20)
+  timestamp         DateTime @db.Timestamptz(6)
+  documents         Document @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_ner_document")
+
+  @@index([document_id, annotator_id], map: "idx_ner_ann_doc_annotator")
+  @@index([document_id], map: "idx_ner_ann_document")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model ner_tag_definitions {
+  id                 String   @id @db.Uuid
+  created_at         DateTime @db.Timestamptz(6)
+  created_by         String   @db.VarChar(255)
+  updated_at         DateTime @db.Timestamptz(6)
+  updated_by         String   @db.VarChar(255)
+  version            BigInt?
+  created_by_user_id String   @db.VarChar(100)
+  description        String?  @db.VarChar(200)
+  scope              String   @db.VarChar(20)
+  tag                String   @db.VarChar(20)
+  workspace_id       String?  @db.Uuid
+
+  @@unique([tag, scope, workspace_id], map: "idx_ner_tag_unique")
+  @@index([scope], map: "idx_ner_tag_scope")
+  @@index([workspace_id], map: "idx_ner_tag_workspace")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model notifications {
+  id           String     @id @db.Uuid
+  actor_id     String?    @db.Uuid
+  created_at   DateTime   @db.Timestamptz(6)
+  link         String?    @db.VarChar(255)
+  message      String     @db.VarChar(255)
+  read         Boolean
+  recipient_id String     @db.Uuid
+  title        String     @db.VarChar(255)
+  type         String?    @db.VarChar(255)
+  workspace_id String?    @db.Uuid
+  users        User       @relation(fields: [recipient_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_notif_recipient")
+  workspaces   Workspace? @relation(fields: [workspace_id], references: [id], onUpdate: NoAction, map: "fk_notif_workspace")
+
+  @@index([recipient_id, read, created_at(sort: Desc)], map: "idx_notifications_recipient_read_created")
+}
+
+model pos_annotations {
+  id           String   @id @db.Uuid
+  created_at   DateTime @db.Timestamptz(6)
+  created_by   String   @db.VarChar(255)
+  updated_at   DateTime @db.Timestamptz(6)
+  updated_by   String   @db.VarChar(255)
+  version      BigInt?
+  annotator_id String   @db.VarChar(100)
+  document_id  String   @db.Uuid
+  pos_tag      String   @db.VarChar(20)
+  timestamp    DateTime @db.Timestamptz(6)
+  token_id     String   @db.Uuid
+  documents    Document @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_pos_document")
+  tokens       Token    @relation(fields: [token_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_pos_token")
+
+  @@unique([token_id, annotator_id], map: "idx_pos_token_annotator")
+  @@index([document_id], map: "idx_pos_document")
+  @@index([token_id], map: "idx_pos_token")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model pos_tag_definitions {
+  id                 String   @id @db.Uuid
+  created_at         DateTime @db.Timestamptz(6)
+  created_by         String   @db.VarChar(255)
+  updated_at         DateTime @db.Timestamptz(6)
+  updated_by         String   @db.VarChar(255)
+  version            BigInt?
+  created_by_user_id String   @db.VarChar(100)
+  description        String?  @db.VarChar(200)
+  scope              String   @db.VarChar(20)
+  tag                String   @db.VarChar(20)
+  workspace_id       String?  @db.Uuid
+
+  @@unique([tag, scope, workspace_id], map: "idx_pos_tag_unique")
+  @@index([scope], map: "idx_pos_tag_scope")
+  @@index([workspace_id], map: "idx_pos_tag_workspace")
+}
+
+model wsd_annotation {
+  id           String    @id @db.Uuid
+  created_at   DateTime  @db.Timestamptz(6)
+  created_by   String    @db.VarChar(255)
+  updated_at   DateTime  @db.Timestamptz(6)
+  updated_by   String    @db.VarChar(255)
+  version      BigInt?
+  annotator_id String    @db.VarChar(100)
+  sense_id     String    @db.Uuid
+  timestamp    DateTime  @db.Timestamptz(6)
+  token_id     String    @db.Uuid
+  workspace_id String    @db.Uuid
+  document_id  String    @db.Uuid
+  documents    Document  @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_wsd_document")
+  wsd_sense    wsd_sense @relation(fields: [sense_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_wsd_sense")
+  tokens       Token     @relation(fields: [token_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_wsd_token")
+  workspaces   Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_wsd_workspace")
+
+  @@unique([token_id, annotator_id], map: "idx_wsd_ann_token_annotator")
+  @@index([sense_id], map: "idx_wsd_ann_sense")
+  @@index([token_id], map: "idx_wsd_ann_token")
+  @@index([workspace_id], map: "idx_wsd_ann_workspace")
+  @@index([workspace_id, document_id], map: "idx_wsd_ann_workspace_document")
+}
+
+model wsd_sense {
+  id             String           @id @db.Uuid
+  created_at     DateTime         @db.Timestamptz(6)
+  created_by     String           @db.VarChar(255)
+  updated_at     DateTime         @db.Timestamptz(6)
+  updated_by     String           @db.VarChar(255)
+  version        BigInt?
+  description    String?
+  sense_label    String           @db.VarChar(200)
+  word           String           @db.VarChar(200)
+  workspace_id   String           @db.Uuid
+  wsd_annotation wsd_annotation[]
+  workspaces     Workspace        @relation(fields: [workspace_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_wsd_sense_workspace")
+
+  @@index([workspace_id, word], map: "idx_wsd_sense_workspace_word")
+}
