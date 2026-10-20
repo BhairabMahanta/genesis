@@ -1,6 +1,6 @@
 # Backend Migration: Java → TypeScript
 
-**Status:** P0 persistence, P1 integrity/notification parity, and P2 functional validation are complete. The frontend has been validated end-to-end against the real TypeScript API. Remaining P2 authorization/transport hardening is listed in §8.
+**Status:** P0 persistence, P1 integrity/notification parity, and P2 functional validation are complete. The frontend has been validated end-to-end against the real TypeScript API. Remaining authorization/transport hardening is listed in §8.
 
 **Last updated:** 2026-10-20
 
@@ -157,6 +157,8 @@ Delivery:
   - Logout and middleware protection of `/home`.
   - No console errors and no 404s after forcing xhr-polling.
 
+> **Mock-mode policy:** removal is intentional. A remote feature commit extending mock mode (`0a19be9`) was dropped during the 2026-10-20 merge. Do not reintroduce `IS_MOCK_MODE`, `NEXT_PUBLIC_MOCK_MODE`, `apps/web/src/server/mock-data.ts`, or mock gateway branches; they conflict with the real-API architecture.
+
 ---
 
 ## 7. Validation evidence
@@ -197,7 +199,7 @@ The API test suite requires PostgreSQL but starts no listener; it cleans up its 
 
 ---
 
-## 8. Remaining work (P2)
+## 8. Remaining hardening (post-P2)
 
 Functional P2 validation is complete. The items below are authorization or transport hardening and do not block the validated frontend flows:
 
@@ -238,7 +240,7 @@ Resolved in this pass:
 - [x] Orphan checks zero
 - [x] Restart persistence verified
 
-### P2 — Hardening
+### P2 — Validation and hardening
 - [x] NER label and span validation
 - [x] POS tag definition validation for single and batch updates
 - [x] Custom NER/POS tag definition validation (pattern, built-in conflict, duplicates)

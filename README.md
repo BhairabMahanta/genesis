@@ -13,6 +13,11 @@ genesis/
 │   └── contracts/              # Shared Zod schemas, types, and DTO contracts
 ├── legacy/
 │   └── genesis-java/           # Original Java 21 / Spring Boot monolith (reference only)
+├── scripts/
+│   └── dev.mjs                 # Local launcher: both services, fixed ports, prefixed logs
+├── .env.example                # Local development defaults
+├── SETUP.md                    # Full local setup and troubleshooting
+├── BACKEND_MIGRATION.md        # Migration outcomes and validation evidence
 ├── pnpm-workspace.yaml
 └── package.json
 ```
@@ -24,7 +29,7 @@ genesis/
 | **`@genesis/contracts`** | `packages/contracts` | Shared types and Zod schemas |
 | **Legacy backend** | `legacy/genesis-java` | Java 21 / Spring Boot 3.3 / Flyway (reference only) |
 
-The TypeScript API is the active backend. The Java project is kept as a read-only behavioural reference. PostgreSQL is the only persistence backend; there is no in-memory mode.
+The TypeScript API is the active backend. The Java project is kept as a read-only behavioural reference. PostgreSQL is the only persistence backend; there is no in-memory mode. The frontend has no mock/offline mode — it always authenticates and talks to the API.
 
 ## Quick start
 
@@ -103,7 +108,7 @@ pnpm build
 |---|---|---|
 | `API_PORT` | Dev launcher | API port set for `pnpm dev`, default `8099` |
 | `WEB_PORT` | Dev launcher | Web port set for `pnpm dev`, default `3000` |
-| `API_REQUEST_LOGS` | Dev launcher / API | Set `false` to silence API request logs |
+| `API_REQUEST_LOGS` | Dev launcher / API | `true` under `pnpm dev`; off in production unless explicitly enabled |
 | `DATABASE_URL` | API | PostgreSQL connection string (`DB_URL` is accepted as an alias) |
 | `PORT` | API | Listener port when running the API directly, default `8080` |
 | `JWT_SECRET` | API | Access-token signing key; required in production, dev fallback otherwise |

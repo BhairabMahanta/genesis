@@ -1,191 +1,135 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for AI coding agents working in this repository.
 
-## Repo Location
+## Repository
 
-The monorepo lives at `D:/temp_prs/genesis` (GitHub: `JyotirmoyDas05/genesis`). The old `genesis-frontend` folder and the standalone Java `genesis` repo are gone, so never reference them. Layout: `apps/web` (Next.js frontend), `apps/api` (TypeScript backend rewrite, in progress), `packages/contracts` (shared Zod schemas), `legacy/genesis-java` (Spring Boot reference you port from).
+- **Local path:** `D:\GU\Gensi\genesis`
+- **GitHub:** `https://github.com/BhairabMahanta/genesis`
+- **Active backend:** `apps/api` — Hono + Prisma + PostgreSQL
+- **Frontend:** `apps/web` — Next.js 15 App Router, React 19, Tailwind CSS v4, shadcn/ui
+- **Shared contracts:** `packages/contracts`
+- **Legacy reference:** `legacy/genesis-java` — Java 21 / Spring Boot; **read-only, never modify**
 
-## Project Overview
+The TypeScript API is the production backend. PostgreSQL is the only persistence backend.
+The frontend has **no mock/offline mode**; it always authenticates and talks to the real API.
 
-Genesis is a modern NLP annotation tool built with Next.js 15, React 19, and TypeScript. The application enables users to create workspaces, manage annotation projects, collaborate with teams, and annotate documents for various NLP tasks like Named Entity Recognition, Sentiment Analysis, Text Classification, and Relation Extraction.
+## Commands
 
-## Development Commands
+Run from the repository root:
 
-### Running the application
 ```bash
-pnpm dev              # Start development server with Turbopack
-pnpm build            # Build production application with Turbopack
-pnpm start            # Start production server
-pnpm lint             # Run ESLint
+pnpm dev          # API + web, prefixed logs ([BACKEND] / [FRONTEND])
+pnpm dev:api      # API only
+pnpm dev:web      # web only
+pnpm build        # build all workspaces
+pnpm lint         # workspace lint scripts that exist
 ```
 
-The development server runs on `http://localhost:3000` by default.
+Targeted checks:
+
+```bash
+# API integration smoke suite (real PostgreSQL; cleans up its own rows)
+pnpm --filter @genesis/api test
+
+# Type checks
+pnpm --filter @genesis/api typecheck
+pnpm --filter @genesis/web exec tsc --noEmit
+
+# Web lint
+pnpm --filter @genesis/web lint
+
+# Prisma client after install / schema sync
+pnpm --filter @genesis/api exec prisma generate
+```
+
+## Local runtime
+
+`pnpm dev` runs `scripts/dev.mjs`, which:
+
+- starts the API on **`http://localhost:8099`** and the web app on **`http://localhost:3000`**;
+- sets `NEXT_PUBLIC_API_URL`, `INTERNAL_API_URL`, and `CORS_ALLOWED_ORIGINS` for the children;
+- reads optional `.env.local` / `.env` from the repository root (shell env wins);
+- refuses to start when a configured port is occupied instead of letting Next move to `3001`;
+- prefixes child output with `[BACKEND]` / `[FRONTEND]`;
+- stops both processes together.
+
+Port `8099` is the local default because `0.0.0.0:8080` is commonly occupied by Apache (`PEMHTTPD-x64`) on this machine. The API's raw code default remains `8080` when run outside the launcher.
+
+Useful endpoints and logs:
+
+- Health: `GET http://localhost:8099/api/health`
+- Terminal `[BACKEND]`: API method, path, status, duration (`API_REQUEST_LOGS`)
+- Terminal `[FRONTEND]`: Next page requests, Server Actions, server-side fetches
+- Browser console `[FRONTEND]`: client route changes, browser `fetch` calls, uncaught errors
+
+Server-side and API logs never appear in the browser console by design. See `SETUP.md` for configuration and troubleshooting.
 
 ## Architecture
 
-### Framework & Tooling
-- **Next.js 15** with App Router (not Pages Router)
-- **React Server Components (RSC)** enabled
-- **Turbopack** for both dev and build
-- **TypeScript** with strict mode
-- **Tailwind CSS v4** with custom CSS variables
-- **shadcn/ui** components with "new-york" style preset
-
-### Project Structure
-
-```
-src/
-├── app/                    # Next.js App Router pages
-│   ├── page.tsx           # Root route (redirects to /login)
-│   ├── layout.tsx         # Root layout with Geist fonts
-│   ├── globals.css        # Global styles with CSS variables
-│   ├── login/             # Login page
-│   ├── signup/            # Sign up page
-│   ├── verify-email/      # Email verification page
-│   ├── home/              # Main dashboard with workspace grid
-│   └── workspace/[id]/    # Dynamic workspace detail page
-├── components/
-│   └── ui/                # shadcn/ui components
-└── lib/
-    └── utils.ts           # Utility functions (cn, etc.)
+```text
+apps/
+├── web/                    Next.js frontend
+│   └── src/
+│       ├── app/            App Router routes + Next route handlers
+│       ├── features/       Feature slices (auth, document, workspace, editor, notifications, ...)
+│       ├── server/         serverFetch, cookies, errors, server-only contracts
+│       ├── config/         validated API URL/environment access
+│       └── components/     shared UI and root providers
+├── api/                    TypeScript API
+│   └── src/
+│       ├── app.ts          Hono app (testable, no listener)
+│       ├── index.ts        HTTP listener / startup
+│       ├── routes/         HTTP layer, one file per domain
+│       ├── services/       business logic
+│       ├── schemas/        Zod validation + DTOs
+│       ├── middleware/     JWT auth, CORS, error envelope, request logging
+│       ├── store/          Prisma persistence and queries
+│       └── lib/            JWT/password helpers
+├── contracts/              Shared Zod schemas and response contracts
+scripts/dev.mjs             Local two-service launcher
+legacy/genesis-java/        Read-only Java/Spring reference
 ```
 
-### Routing Strategy
-- Root `/` redirects to `/login`
-- Authentication flow: `/login` → `/signup` → `/verify-email`
-- Authenticated routes: `/home` (dashboard) → `/workspace/[id]` (workspace detail) → `/workspace/[id]/editor` (annotation editor)
+API conventions:
 
-### Component Patterns
+- Responses use the legacy `ApiResponse<T>` envelope (`success`, `data`, `message`, optional `fieldErrors`).
+- Request validation belongs in `src/schemas/`; business logic in `src/services/`; Prisma access in `src/store/`.
+- The Hono app is shared by the server and tests; only `src/index.ts` opens a listener.
+- The schema is owned by the legacy Flyway migrations `V1`–`V8`. Prisma is a typed query client only — do **not** use `prisma migrate` or `prisma db push`.
+- Notifications use persisted rows plus SockJS xhr-polling and a minimal STOMP broker. Native WebSocket is intentionally not implemented.
 
-**Client vs Server Components:**
-- Most pages use `'use client'` directive for interactivity
-- Pages requiring routing hooks (`useRouter`, `useParams`) must be client components
-- Layout components are server components by default
+Web conventions:
 
-**UI Components:**
-- All UI components are from shadcn/ui with customizations
-- Import pattern: `@/components/ui/[component-name]`
-- Components use CVA (class-variance-authority) for variants
-- Tailwind classes merged with `cn()` utility from `@/lib/utils`
+- Feature code stays inside `src/features/<feature>/` (contracts, gateway, actions, components).
+- Gateways imported by server code use `server-only`; browser code should go through Server Actions or route handlers rather than calling the API directly.
+- `src/server/http.ts` is the server-side API client; it reads HttpOnly cookies and handles session expiry.
+- `src/middleware.ts` performs proactive refresh and route protection.
+- `NEXT_PUBLIC_*` values are inlined at build time; restart the dev server after changing them.
 
-### Styling System
+## Do not reintroduce mock mode
 
-**CSS Variables Architecture:**
-- Primary brand color: `#3950FE` (stored in `--primary`)
-- Custom CSS variables defined in `globals.css` root scope
-- Dark mode variables auto-switch via `@media (prefers-color-scheme: dark)`
-- Uses oklch color space for Tailwind colors
-- Custom gradients via `--primary-gradient-start` and `--primary-gradient-end`
+Mock mode was removed as part of the Java → TypeScript/real-API migration:
 
-**Tailwind Configuration:**
-- Import path alias: `@/*` maps to `./src/*`
-- No prefix for Tailwind classes
-- Base color: neutral
-- CSS variables mode enabled
-- Custom radius: `0.625rem`
+- `apps/web/src/server/mock-data.ts` is deleted.
+- `IS_MOCK_MODE` / `NEXT_PUBLIC_MOCK_MODE` and all mock branches/imports are gone.
+- The frontend always reads and writes the real API.
 
-**Design Tokens:**
-- Geist Sans (primary font)
-- Geist Mono (monospace font)
-- Gradient backgrounds: `from-slate-50 via-indigo-50/30 to-purple-50/30`
-- Glassmorphism effects with backdrop blur
+A remote feature commit that extended mock mode (`0a19be9`) was intentionally dropped during the 2026-10-20 merge. A branch that reintroduces `IS_MOCK_MODE`, `mock-data.ts`, or mock gateway branches is incompatible with the current architecture.
 
-### State Management
+## Documentation map
 
-Currently using React local state (`useState`) in client components. Mock data is defined inline within components:
-- `recentWorkspaces` and `allWorkspaces` in `/home/page.tsx`
-- `workspaceData` in `/workspace/[id]/page.tsx`
+- `README.md` — monorepo overview, quick start, configuration
+- `SETUP.md` — full local setup, schema application, ports, logs, troubleshooting
+- `BACKEND_MIGRATION.md` — migration outcomes, endpoint coverage, validation evidence, deferred hardening
 
-When implementing real data fetching, consider using React Server Components with async/await or client-side data fetching with SWR/React Query.
+## Deferred hardening
 
-### Key Features
+These do not block current functional flows:
 
-**Home Page (`/home`):**
-- Workspace search and filtering
-- Tabs for "Recent" vs "All" workspaces
-- Dialog for creating new workspaces
-- Workspace cards with progress tracking
-- Import workspace functionality
+1. NER/POS tag mutation authorization (global tag create/delete and tag deletion).
+2. Optional native WebSocket transport.
+3. Optional durable/retry processing for tokenization.
+4. Production Cloudinary credential validation.
 
-**Workspace Page (`/workspace/[id]`):**
-- Sidebar navigation with 5 sections: Getting Started, Documents, Collaborators, Annotation Schema, Settings
-- Document list with filtering by status (completed, in-progress, unannotated)
-- Annotation layer and label management
-- Workspace settings and collaboration preferences
-- Progress tracking in sidebar
-
-**Annotation Schema:**
-- Multi-layer annotation support (span, relation types)
-- Customizable labels with colors and keyboard shortcuts
-- Label examples: Sentiment (Positive, Negative, Neutral, Mixed), Entities (Product, Feature, Company)
-
-**Annotation Editor (`/workspace/[id]/editor`):**
-- Full-featured text annotation interface with real-time highlighting
-- Text selection-based annotation workflow
-- Keyboard shortcuts for rapid annotation (each label has a shortcut key)
-- Multi-layer annotation support with layer switching
-- Visual annotation highlighting with customizable colors
-- Annotation management: hover to preview, delete with keyboard
-- Document navigation (previous/next) with annotation persistence per document
-- Sidebar label palette with real-time annotation list
-- Tooltip-based annotation details on hover
-
-## Adding shadcn/ui Components
-
-The project is configured with shadcn/ui. To add new components:
-
-```bash
-pnpx shadcn@latest add [component-name]
-```
-
-Components are installed to `src/components/ui/` with the New York style.
-
-## Path Aliases
-
-TypeScript and Next.js are configured with the following import aliases:
-- `@/*` → `./src/*`
-- `@/components` → `./src/components`
-- `@/lib` → `./src/lib`
-- `@/hooks` → `./src/hooks` (directory not yet created)
-
-## Important Conventions
-
-1. **Client Components:** Use `'use client'` directive when components need:
-   - React hooks (useState, useEffect, etc.)
-   - Next.js navigation hooks (useRouter, useParams, useSearchParams)
-   - Event handlers
-   - Browser APIs
-
-2. **Image Assets:** Logo and images are stored in `/public` directory
-   - Example: `/genesis-logo.svg` referenced as `/genesis-logo.svg` in Image component
-
-3. **Type Safety:** The project uses TypeScript strict mode. Always define types for props and state.
-
-4. **CSS Variables in JSX:** Use inline styles for dynamic CSS variables:
-   ```tsx
-   style={{ width: `${workspace.progress}%` }}
-   className="bg-[var(--primary)]"
-   ```
-
-5. **Icon Pattern:** Currently using inline SVG icons. Consider consolidating with lucide-react (already installed).
-
-## Known Patterns
-
-- **Redirect Pattern:** Home page (`/`) uses `redirect()` from `next/navigation` (server-side redirect)
-- **Mock Data:** Workspace and document data is currently mocked inline. Plan for API integration.
-- **Workspace ID Routing:** Uses Next.js dynamic routes with `[id]` segment
-- **Status Badges:** Use helper function `getStatusBadge()` for consistent status styling
-- **Text Selection Annotation:** Editor uses `window.getSelection()` API to capture text ranges and convert to character offsets
-- **Annotation Storage:** Annotations are stored with start/end character positions, enabling accurate text highlighting
-- **Keyboard Event Handling:** Editor uses global `keydown` listeners for label shortcuts and annotation deletion
-
-## Future Considerations
-
-- Backend API integration for authentication and data management
-- Real-time collaboration features
-- File upload handling for document import
-- Export functionality for various annotation formats (JSON, CoNLL, WebAnno TSV, CSV, UIMA CAS XMI)
-- Annotation persistence to backend (currently in-memory only)
-- Inter-annotator agreement metrics
-- Annotation history and versioning
+See `BACKEND_MIGRATION.md` §8 for details.
