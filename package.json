@@ -7,9 +7,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "pnpm --filter @genesis/web dev",
-    "dev:api": "pnpm --filter @genesis/api dev",
-    "dev:all": "pnpm --filter \"@genesis/*\" dev",
+    "dev": "node scripts/dev.mjs",
+    "dev:api": "node scripts/dev.mjs api",
+    "dev:web": "node scripts/dev.mjs web",
+    "dev:all": "node scripts/dev.mjs",
     "build": "pnpm --filter \"@genesis/*\" build",
     "lint": "pnpm --filter \"@genesis/*\" lint",
     "typecheck": "pnpm --filter \"@genesis/*\" typecheck"

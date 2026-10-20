@@ -40,6 +40,7 @@ import type {
   RefreshTokenEntity,
   SentenceEntity,
   StoredFileEntity,
+  TagScope,
   TokenEntity,
   UserEntity,
   WorkspaceEntity,
@@ -677,6 +678,10 @@ export async function findTokenById(tokenId: string): Promise<TokenEntity | unde
   return row ? mapToken(row) : undefined;
 }
 
+export async function countTokens(documentId: string): Promise<number> {
+  return prisma.token.count({ where: { documentId } });
+}
+
 // --- NER ---------------------------------------------------------------
 
 function mapNerTag(row: ner_tag_definitions): NerTagEntity {
@@ -724,6 +729,22 @@ export async function listNerTags(workspaceId?: string): Promise<NerTagEntity[]>
     orderBy: { created_at: "asc" },
   });
   return rows.map(mapNerTag);
+}
+
+export async function findNerTagDefinition(
+  tag: string,
+  scope: TagScope,
+  workspaceId: string | null,
+): Promise<NerTagEntity | undefined> {
+  const row = await prisma.ner_tag_definitions.findFirst({
+    where: { tag, scope, workspace_id: workspaceId },
+  });
+  return row ? mapNerTag(row) : undefined;
+}
+
+export async function findNerTagById(id: string): Promise<NerTagEntity | undefined> {
+  const row = await prisma.ner_tag_definitions.findUnique({ where: { id } });
+  return row ? mapNerTag(row) : undefined;
 }
 
 export async function deleteNerTag(id: string): Promise<void> {
@@ -1145,6 +1166,22 @@ export async function listPosTags(workspaceId?: string): Promise<PosTagEntity[]>
     orderBy: { created_at: "asc" },
   });
   return rows.map(mapPosTag);
+}
+
+export async function findPosTagDefinition(
+  tag: string,
+  scope: TagScope,
+  workspaceId: string | null,
+): Promise<PosTagEntity | undefined> {
+  const row = await prisma.pos_tag_definitions.findFirst({
+    where: { tag, scope, workspace_id: workspaceId },
+  });
+  return row ? mapPosTag(row) : undefined;
+}
+
+export async function findPosTagById(id: string): Promise<PosTagEntity | undefined> {
+  const row = await prisma.pos_tag_definitions.findUnique({ where: { id } });
+  return row ? mapPosTag(row) : undefined;
 }
 
 export async function deletePosTag(id: string): Promise<void> {

@@ -1,170 +1,294 @@
-# Genesis Frontend - Mock Mode Quickstart Guide
+# Genesis — Local Setup Guide
 
-This guide provides step-by-step, handholding instructions to get the **Genesis Frontend** running locally in **Mock Mode**. Both **pnpm** and **npm** commands are provided for every step.
+This guide runs the real stack: PostgreSQL + the TypeScript API (`apps/api`) + the Next.js frontend (`apps/web`). There is no mock data or offline frontend mode — the UI always talks to the API.
 
-> [!NOTE]
-> **No backend, Java, Docker, or database setup is needed!**
-> Mock Mode bypasses authentication, provides realistic mock data (workspaces, documents, team members, and notifications), and lets you test and design the UI immediately.
+Both PowerShell and POSIX-style commands are shown where they differ. Examples use the default PostgreSQL superuser (`postgres` / `postgres`); change the credentials if your installation differs.
 
 ---
 
-## 📋 Step 0: Check Prerequisites
+## Step 0 — Prerequisites
 
-Before starting, make sure you have **Node.js** installed along with either **pnpm** or **npm**.
+Check the toolchain:
 
-### Open your Terminal / PowerShell / Command Prompt
-Run these commands to verify:
-
-```bash
-node -v
-```
-- **Node.js**: Should be version `20.x` or `22.x` (e.g., `v22.21.0`).
-
-Check your package manager:
-- If using **pnpm** (recommended):
-  ```bash
-  pnpm -v
-  ```
-- If using **npm**:
-  ```bash
-  npm -v
-  ```
-
-> [!TIP]
-> If you prefer using `pnpm` and do not have it installed yet:
-> ```bash
-> npm install -g pnpm
-> ```
-
----
-
-## 🚀 Step 1: Open the Project Directory
-
-Navigate to the project root directory in your terminal:
-
-```bash
-cd D:/temp_prs/genesis
-```
-*(Replace with your actual folder path if different)*
-
----
-
-## 📦 Step 2: Install Project Dependencies
-
-Run the install command from the root directory:
-
-#### Option A: Using `pnpm` (Recommended)
-```bash
-pnpm install
-```
-
-#### Option B: Using `npm`
-```bash
-npm install
-```
-
-Wait until the installation completes successfully.
-
----
-
-## 💻 Step 3: Start the Application in Mock Mode
-
-Run the mock development server:
-
-#### Option A: Using `pnpm`
-```bash
-pnpm dev:mock
-```
-
-#### Option B: Using `npm`
-From the project root:
-```bash
-npm --prefix apps/web run dev:mock
-```
-*(Or navigate into `apps/web` and run `npm run dev:mock`)*
-
-You will see output similar to:
-```text
-> cross-env NEXT_PUBLIC_MOCK_MODE=true next dev
-   ▲ Next.js 15.5.9
-   - Local:        http://localhost:3000
-   - Network:      http://...:3000
-
- ✓ Ready in 2-3s
-```
-
-> [!IMPORTANT]
-> Keep this terminal window open while you use the application. To stop the server later, press `Ctrl + C`.
-
----
-
-## 🌐 Step 4: Open in Your Browser
-
-Open your browser (Chrome, Edge, Firefox, or Safari) and go to:
-
-👉 **[http://localhost:3000](http://localhost:3000)**
-
-### What Happens Automatically:
-1. **Login is bypassed**: You are not redirected to `/login`.
-2. **Dashboard opens**: You are directly navigated to `/home`.
-3. **Session loaded**: You are automatically logged in as:
-   - **Name**: Alex Rivera
-   - **Role**: Admin
-   - **Organization**: Genesis NLP Research Lab
-4. **Mock Workspaces Displayed**:
-   - `Biomedical Entity Extraction (PubMed)` (NER — 80% progress)
-   - `Financial Disclosures Coreference` (COREF — 60% progress)
-   - `Legal Contracts Syntax & POS` (POS — 100% completed)
-   - `Word Sense Disambiguation Pilot` (WSD — 20% progress)
-
----
-
-## 🧪 What You Can Test Right Now
-
-- **Click on Any Workspace Card**: Opens the workspace dashboard with sample uploaded documents and team members.
-- **Create a New Workspace**: Click the **"+ New Workspace"** button, enter a name, description, and task type (e.g. NER), and click **Create**. It will instantly show up in the workspace list!
-- **Notification Dropdown**: Click the bell icon in the header to view sample notifications.
-- **Clean Console**: The background WebSocket (SockJS/STOMP) is silenced in Mock Mode so your browser dev tools stay free of network errors.
-
----
-
-## 🔄 Two Modes: Mock vs Real Integration
-
-| Mode | Using `pnpm` | Using `npm` | Requires Backend / Docker? |
-|---|---|---|---|
-| **Mock Mode** (UI dev & demo) | `pnpm dev:mock` | `npm --prefix apps/web run dev:mock` | ❌ No |
-| **Integration Mode** (Real API) | `pnpm dev` | `npm --prefix apps/web run dev` | ✅ Yes (`localhost:8080`) |
-
----
-
-## 🛠️ Customizing the Mock Data
-
-If you want to add or modify sample users, workspaces, or documents:
-- Edit the file: [`apps/web/src/server/mock-data.ts`](file:///D:/temp_prs/genesis/apps/web/src/server/mock-data.ts)
-- Next.js will hot-reload your changes automatically without needing a server restart!
-
----
-
-## ❓ Troubleshooting
-
-### 1. `Port 3000 is already in use`
-If port 3000 is occupied by another process, either close the other process or Next.js will automatically prompt to use `http://localhost:3001`.
-
-### 2. PowerShell execution policy error
-If PowerShell blocks running scripts:
 ```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+node -v        # 20 or newer
+pnpm -v        # 9 or newer
+psql --version # PostgreSQL 15 or newer
 ```
-Then re-run the start command.
 
-### 3. Clear Next.js cache if things look out of date
-- **pnpm**:
-  ```bash
-  rm -rf apps/web/.next
-  pnpm dev:mock
-  ```
-- **npm**:
-  ```bash
-  rm -rf apps/web/.next
-  npm --prefix apps/web run dev:mock
-  ```
+If pnpm is missing:
+
+```powershell
+corepack enable
+# or: npm install -g pnpm
+```
+
+Start PostgreSQL and confirm it accepts connections:
+
+```powershell
+Get-Service postgresql*
+psql -U postgres -h localhost -d postgres -c "select version();"
+```
+
+The schema comes from the legacy Flyway migrations and is applied with `psql`; Flyway itself is not required for the TypeScript API.
+
+---
+
+## Step 1 — Create the database
+
+From the repository root:
+
+```powershell
+$env:PGPASSWORD = "postgres"
+$psql = "C:\Program Files\PostgreSQL\18\bin\psql.exe" # adjust version/path
+
+& $psql -U postgres -h localhost -d postgres -c "CREATE DATABASE genesis;"
+```
+
+If the database already exists, skip the `CREATE DATABASE` command.
+
+---
+
+## Step 2 — Apply the schema (V1–V8)
+
+The TypeScript API expects the exact schema from the legacy Flyway migrations. Apply every file in filename order:
+
+```powershell
+$migrations = "legacy\genesis-java\genesis-api\src\main\resources\db\migration"
+
+Get-ChildItem "$migrations\V*.sql" |
+  Sort-Object Name |
+  ForEach-Object {
+    Write-Host "Applying $($_.Name)"
+    & $psql -U postgres -h localhost -d genesis -v ON_ERROR_STOP=1 -f $_.FullName
+    if ($LASTEXITCODE -ne 0) { throw "Migration failed: $($_.Name)" }
+  }
+```
+
+Verify the tables exist (the schema has 20 application tables):
+
+```powershell
+& $psql -U postgres -h localhost -d genesis -c "\dt"
+```
+
+> Apply the migrations once to an empty database. Re-running `V1__baseline.sql` against a populated schema will fail.
+
+---
+
+## Step 3 — Install dependencies and generate Prisma
+
+From the repository root:
+
+```powershell
+pnpm install
+pnpm --filter @genesis/api exec prisma generate
+```
+
+Prisma is used as a typed query client only. The Flyway SQL remains the schema authority; do not use `prisma migrate` or `prisma db push` to change the schema.
+
+---
+
+## Step 4 — Start the full stack
+
+From the repository root:
+
+```powershell
+pnpm dev
+```
+
+This starts both services with prefixed logs and fixed local ports:
+
+| Service | Default URL | Log prefix |
+|---|---|---|
+| API | `http://localhost:8099` | `[BACKEND]` |
+| Web | `http://localhost:3000` | `[FRONTEND]` |
+
+Open **http://localhost:3000**. Check the API at `http://localhost:8099/api/health`; it returns `UP` only when PostgreSQL is reachable.
+
+The launcher reads optional `.env.local` and `.env` files from the repository root. Copy `.env.example` to `.env` to override defaults:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Defaults applied when the variables are unset:
+
+- `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/genesis`
+- `API_PORT=8099` (avoids the common port-8080 conflict)
+- `WEB_PORT=3000`
+- `NEXT_PUBLIC_API_URL` / `INTERNAL_API_URL` follow `API_PORT`
+- `STORAGE_PROVIDER=local`
+- `JWT_SECRET` uses a development-only fallback that is stable across restarts
+
+Shell environment variables take precedence over `.env` values. `NEXT_PUBLIC_*` values are inlined when Next compiles, so restart `pnpm dev` after changing them.
+
+### Run only one service
+
+```powershell
+pnpm dev:api   # API only, [BACKEND] logs
+pnpm dev:web   # web only, [FRONTEND] logs, expects the API at localhost:8099
+```
+
+### Port conflicts
+
+The launcher checks the configured ports before starting and exits with a clear message instead of letting Next silently move to 3001. Stop the existing process, or pick another port in `.env`:
+
+```text
+API_PORT=8100
+WEB_PORT=3001
+```
+
+If you run a service outside the launcher, export the matching `NEXT_PUBLIC_API_URL` and `INTERNAL_API_URL` values yourself.
+
+### Where the logs go
+
+- `[BACKEND]` lines are API request logs (`method path status duration`) from the terminal running `pnpm dev`.
+- `[FRONTEND]` lines are Next.js server logs (page requests, Server Actions, outbound fetches to the API).
+- Browser DevTools console shows client-side `[FRONTEND]` route, fetch, and uncaught-error breadcrumbs. Server-side logs never appear in the browser console by design.
+
+---
+
+## Step 5 — First use
+
+1. Go to `http://localhost:3000/signup` and create an account.
+2. Sign in. The home dashboard loads workspaces from PostgreSQL.
+3. Create a workspace (NER, COREF, POS, or WSD).
+4. Open the workspace, upload a plain-text document, and wait for processing to finish.
+5. Open the editor to inspect sentences and tokens.
+6. The notification bell shows workspace/document events and receives new events live over STOMP.
+
+---
+
+## Tests and type checks
+
+The API suite is an integration smoke test: it uses the real app and PostgreSQL, creates uniquely named users/workspaces, and removes them at the end.
+
+```powershell
+pnpm --filter @genesis/api test
+```
+
+Override the test database with `DATABASE_URL` if needed. The default is `postgresql://postgres:postgres@localhost:5432/genesis`.
+
+Type checks:
+
+```powershell
+pnpm --filter @genesis/api typecheck
+pnpm --filter @genesis/web exec tsc --noEmit
+```
+
+Production build:
+
+```powershell
+$env:NEXT_PUBLIC_API_URL = "http://localhost:8099"
+$env:INTERNAL_API_URL = "http://localhost:8099"
+pnpm build
+```
+
+On Windows accounts without symbolic-link privileges, Next's standalone bundle step can fail with `EPERM` while copying `react`/`next` into `.next/standalone`. Skip the Docker bundle for a local build:
+
+```powershell
+$env:NEXT_STANDALONE = "false"
+pnpm build
+```
+
+---
+
+## Configuration reference
+
+### Dev launcher
+
+`pnpm dev` sets these for its child processes and reads optional `.env.local` / `.env` from the repository root.
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `API_PORT` | No | `8099` | API port chosen by the launcher |
+| `WEB_PORT` | No | `3000` | Web port chosen by the launcher |
+| `API_REQUEST_LOGS` | No | `true` | Print API request/status/duration lines |
+
+### API
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `DATABASE_URL` | Yes | — | PostgreSQL connection string (`DB_URL` also accepted) |
+| `PORT` | No | `8080` | HTTP listener port when running the API directly |
+| `JWT_SECRET` | Production | dev fallback | Access-token signing secret, minimum 32 characters |
+| `JWT_ACCESS_TOKEN_EXPIRY` | No | `15m` | Access-token TTL (`15m`, `900s`, `PT15M`, or milliseconds) |
+| `JWT_REFRESH_TOKEN_EXPIRY` | No | `7d` | Refresh-token TTL |
+| `CORS_ALLOWED_ORIGINS` | Production | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated allowed origins |
+| `STORAGE_PROVIDER` | No | `cloudinary` | `local` or `cloudinary`; local is recommended for development |
+| `STORAGE_LOCAL_BASE_PATH` | No | `./data/uploads` | Local upload directory, relative to `apps/api` |
+| `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | Cloudinary only | — | Cloudinary credentials |
+| `STORAGE_RETAIN_SOURCE` | No | `true` | Keep uploaded source files |
+
+### Web
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `NEXT_PUBLIC_API_URL` | Production | `http://localhost:8080` (`8099` under `pnpm dev`) | Browser-facing API base URL; inlined at build time |
+| `INTERNAL_API_URL` | No | `NEXT_PUBLIC_API_URL` | Server-side API base URL for RSC/actions/middleware |
+
+---
+
+## Troubleshooting
+
+### `DATABASE_URL (or DB_URL) must be set`
+
+`pnpm dev` reads `DATABASE_URL` from the optional root `.env.local` / `.env` files (or from the shell). If you start the API directly with `pnpm --filter @genesis/api dev`, export `DATABASE_URL` in that terminal or provide the root `.env` file via the launcher.
+
+### `Environment variable JWT_SECRET must be set`
+
+Production (`NODE_ENV=production`) requires `JWT_SECRET`. Set a random value of at least 32 characters.
+
+### Prisma client errors (`@prisma/client did not initialize`)
+
+Generate the client after installing dependencies:
+
+```powershell
+pnpm --filter @genesis/api exec prisma generate
+```
+
+### Database authentication fails
+
+Confirm the service is running and the username/password/database in `DATABASE_URL` are correct:
+
+```powershell
+psql -U postgres -h localhost -d genesis -c "select 1;"
+```
+
+### Migration fails partway through
+
+Use a clean database. The baseline is a full schema dump, not an idempotent script. Drop/recreate `genesis`, then re-run Step 2 from `V1`.
+
+### Port 8080 or 3000 is occupied
+
+`pnpm dev` checks `API_PORT` (default `8099`) and `WEB_PORT` (default `3000`) and exits instead of silently choosing another port. Stop the old process, or change the port in `.env`:
+
+```text
+API_PORT=8100
+WEB_PORT=3001
+```
+
+The launcher adjusts `NEXT_PUBLIC_API_URL`, `INTERNAL_API_URL`, and `CORS_ALLOWED_ORIGINS` automatically.
+
+### Frontend still calls the old API URL
+
+`NEXT_PUBLIC_API_URL` is compiled into the client bundle. Stop and restart `pnpm dev` after changing it, and clear `apps/web/.next` if the old value persists.
+
+### `next build` fails with `EPERM ... symlink ... .next\standalone`
+
+This is a Windows symbolic-link privilege issue in Next's standalone tracing, not an application error. Either enable Windows Developer Mode / run with the required privilege, or build without the standalone Docker bundle:
+
+```powershell
+$env:NEXT_STANDALONE = "false"
+pnpm build
+```
+
+Docker builds keep the default standalone output.
+
+### Notifications do not connect
+
+The API exposes SockJS over `/ws` using xhr-polling (there is no native WebSocket transport). Make sure `NEXT_PUBLIC_API_URL` is reachable from the browser and that the API is running. The frontend subscribes to `/user/queue/notifications`.
+
+### Uploads disappear after restart
+
+Local uploads live under `apps/api/data/uploads/`. That directory is git-ignored, so it survives application restarts but is not committed to the repository.

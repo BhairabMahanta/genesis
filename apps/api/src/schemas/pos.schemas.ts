@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const createPosTagSchema = z.object({
   tag: z.string().min(1).max(20),
-  description: z.string().max(500).nullish(),
+  description: z.string().max(200).nullish(),
   scope: z.enum(["GLOBAL", "WORKSPACE"]).default("GLOBAL"),
   workspaceId: z.string().uuid().nullish(),
 });

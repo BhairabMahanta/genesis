@@ -43,7 +43,7 @@ nerTagRoutes.get("/", authMiddleware, async (c) => {
 nerTagRoutes.post("/", authMiddleware, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const input = parseOrThrow(createNerTagSchema, body);
-  return c.json(success(await createTag(input)), 200);
+  return c.json(success(await createTag(c.get("userId"), input)), 200);
 });
 
 nerTagRoutes.delete("/:definitionId", authMiddleware, async (c) => {

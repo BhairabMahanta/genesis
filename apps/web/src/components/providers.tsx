@@ -1,6 +1,7 @@
 'use client';
 
 import { Toaster } from 'sonner';
+import { DevConsoleLogger } from '@/components/dev-console-logger';
 
 /**
  * Root providers — available on every route. Only truly global, render-agnostic
@@ -12,6 +13,7 @@ import { Toaster } from 'sonner';
 export function Providers({ children }: { children: React.ReactNode }) {
     return (
         <>
+            <DevConsoleLogger />
             {children}
             <Toaster position="top-right" richColors closeButton />
         </>

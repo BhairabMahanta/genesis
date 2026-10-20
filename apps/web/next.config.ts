@@ -7,6 +7,10 @@ const standalone = process.env.NEXT_STANDALONE !== "false";
 
 const nextConfig: NextConfig = {
   output: standalone ? "standalone" : undefined,
+  logging: {
+    // Show full URLs for server-side fetches (Server Actions / RSC -> API).
+    fetches: { fullUrl: true },
+  },
   experimental: {
     serverActions: {
       // Document uploads (TXT / CoNLL-2012 / XMI corpora) flow through the

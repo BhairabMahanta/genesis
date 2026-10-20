@@ -1,4 +1,5 @@
 import { bodyLimit } from "hono/body-limit";
+import { logger } from "hono/logger";
 import { Hono } from "hono";
 import { config } from "./config.js";
 import { isDatabaseHealthy } from "./db.js";
@@ -39,6 +40,17 @@ import { wsRoutes } from "./routes/ws.routes.js";
  */
 
 export const app = new Hono();
+
+// Development request log: method, path, status, and duration. The dev
+// launcher sets API_REQUEST_LOGS=true; production defaults to off unless
+// explicitly enabled.
+const requestLogs = process.env["API_REQUEST_LOGS"];
+if (
+  requestLogs === "true" ||
+  (requestLogs === undefined && process.env.NODE_ENV !== "production")
+) {
+  app.use("*", logger());
+}
 
 app.use("*", corsMiddleware);
 app.use(

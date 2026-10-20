@@ -43,7 +43,7 @@ posTagRoutes.get("/", authMiddleware, async (c) => {
 
 posTagRoutes.post("/", authMiddleware, async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  return c.json(success(await createTag(parseOrThrow(createPosTagSchema, body))), 200);
+  return c.json(success(await createTag(c.get("userId"), parseOrThrow(createPosTagSchema, body))), 200);
 });
 
 posTagRoutes.delete("/:definitionId", authMiddleware, async (c) => {

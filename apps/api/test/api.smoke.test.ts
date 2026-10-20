@@ -23,6 +23,7 @@ process.env["DATABASE_URL"] ??=
 process.env["JWT_SECRET"] ??= "test-only-secret-that-is-at-least-32-chars";
 process.env["STORAGE_PROVIDER"] = "local";
 process.env["STORAGE_LOCAL_BASE_PATH"] = storageBase;
+process.env["API_REQUEST_LOGS"] = "false";
 
 const { default: app } = await import("../src/app.js");
 const { prisma } = await import("../src/db.js");
@@ -34,6 +35,7 @@ interface ApiResponse<T> {
   success: boolean;
   data: T;
   message?: string;
+  fieldErrors?: Record<string, string[]>;
 }
 
 async function call<T>(
@@ -48,9 +50,9 @@ async function call<T>(
   return { res, body: (text ? JSON.parse(text) : {}) as ApiResponse<T> };
 }
 
-function jsonBody(value: unknown): RequestInit {
+function jsonBody(value: unknown, method = "POST"): RequestInit {
   return {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(value),
   };
@@ -68,6 +70,10 @@ test("API smoke: auth, workspace, document, notifications, cascade delete", asyn
   let ownerToken = "";
   let workspaceId = "";
   let documentId = "";
+  let firstTokenId = "";
+  let secondTokenId = "";
+  const createdNerTagIds: string[] = [];
+  const createdPosTagIds: string[] = [];
 
   try {
     await t.test("health reports database UP", async () => {
@@ -193,7 +199,10 @@ test("API smoke: auth, workspace, document, notifications, cascade delete", asyn
       }
       assert.ok(completed, "document tokenization did not complete");
 
-      const content = await call<{ tokens: Array<{ form: string }>; totalTokens: number }>(
+      const content = await call<{
+        tokens: Array<{ id: string; form: string }>;
+        totalTokens: number;
+      }>(
         `/api/editor/workspaces/${workspaceId}/documents/${documentId}/content?page=0&size=50`,
         {},
         ownerToken,
@@ -204,6 +213,224 @@ test("API smoke: auth, workspace, document, notifications, cascade delete", asyn
       assert.ok(forms.includes("loves"));
       assert.ok(forms.includes("Mary"));
       assert.ok(content.body.data.totalTokens >= 6);
+      firstTokenId = content.body.data.tokens[0]?.id ?? "";
+      secondTokenId = content.body.data.tokens[1]?.id ?? "";
+      assert.ok(firstTokenId && secondTokenId, "expected token ids for annotation tests");
+    });
+
+    await t.test("NER annotations reject undefined labels and invalid spans", async () => {
+      const created = await call<{
+        id: string;
+        label: string;
+        startTokenIndex: number;
+        endTokenIndex: number;
+      }>(
+        "/api/ner-annotations",
+        jsonBody({ documentId, startTokenIndex: 0, endTokenIndex: 1, label: "PERSON" }),
+        ownerToken,
+      );
+      assert.equal(created.res.status, 200);
+      assert.equal(created.body.data.label, "PERSON");
+      const annotationId = created.body.data.id;
+
+      const badLabel = await call(
+        "/api/ner-annotations",
+        jsonBody({
+          documentId,
+          startTokenIndex: 0,
+          endTokenIndex: 1,
+          label: "SMOKE_UNDEFINED",
+        }),
+        ownerToken,
+      );
+      assert.equal(badLabel.res.status, 400);
+      assert.ok(badLabel.body.fieldErrors?.["label"]);
+
+      const badBounds = await call(
+        "/api/ner-annotations",
+        jsonBody({
+          documentId,
+          startTokenIndex: 0,
+          endTokenIndex: 99999,
+          label: "PERSON",
+        }),
+        ownerToken,
+      );
+      assert.equal(badBounds.res.status, 400);
+      assert.ok(badBounds.body.fieldErrors?.["endTokenIndex"]);
+
+      const reversedUpdate = await call(
+        `/api/ner-annotations/${annotationId}`,
+        jsonBody({ startTokenIndex: 2, endTokenIndex: 1 }, "PATCH"),
+        ownerToken,
+      );
+      assert.equal(reversedUpdate.res.status, 400);
+      assert.ok(reversedUpdate.body.fieldErrors?.["endTokenIndex"]);
+
+      const outOfBoundsUpdate = await call(
+        `/api/ner-annotations/${annotationId}`,
+        jsonBody({ endTokenIndex: 99999 }, "PATCH"),
+        ownerToken,
+      );
+      assert.equal(outOfBoundsUpdate.res.status, 400);
+      assert.ok(outOfBoundsUpdate.body.fieldErrors?.["endTokenIndex"]);
+
+      const badUpdateLabel = await call(
+        `/api/ner-annotations/${annotationId}`,
+        jsonBody({ label: "SMOKE_UNDEFINED" }, "PATCH"),
+        ownerToken,
+      );
+      assert.equal(badUpdateLabel.res.status, 400);
+      assert.ok(badUpdateLabel.body.fieldErrors?.["label"]);
+
+      const validUpdate = await call<{ label: string; startTokenIndex: number; endTokenIndex: number }>(
+        `/api/ner-annotations/${annotationId}`,
+        jsonBody({ startTokenIndex: 1, endTokenIndex: 2, label: "ORG" }, "PATCH"),
+        ownerToken,
+      );
+      assert.equal(validUpdate.res.status, 200);
+      assert.equal(validUpdate.body.data.label, "ORG");
+      assert.equal(validUpdate.body.data.startTokenIndex, 1);
+      assert.equal(validUpdate.body.data.endTokenIndex, 2);
+
+      const customTag = `SMK_${runId.toUpperCase()}`;
+      const createdTag = await call<{ id: string; tag: string; scope: string }>(
+        "/api/ner-tags",
+        jsonBody({
+          tag: customTag,
+          description: "smoke custom NER tag",
+          scope: "WORKSPACE",
+          workspaceId,
+        }),
+        ownerToken,
+      );
+      assert.equal(createdTag.res.status, 200);
+      assert.equal(createdTag.body.data.tag, customTag);
+      assert.equal(createdTag.body.data.scope, "WORKSPACE");
+      createdNerTagIds.push(createdTag.body.data.id);
+
+      const customAnnotation = await call<{ label: string }>(
+        "/api/ner-annotations",
+        jsonBody({
+          documentId,
+          startTokenIndex: 0,
+          endTokenIndex: 1,
+          label: customTag,
+        }),
+        ownerToken,
+      );
+      assert.equal(customAnnotation.res.status, 200);
+      assert.equal(customAnnotation.body.data.label, customTag);
+
+      const duplicateTag = await call(
+        "/api/ner-tags",
+        jsonBody({ tag: customTag, scope: "WORKSPACE", workspaceId }),
+        ownerToken,
+      );
+      assert.equal(duplicateTag.res.status, 400);
+      assert.ok(duplicateTag.body.fieldErrors?.["tag"]);
+
+      const builtinConflict = await call(
+        "/api/ner-tags",
+        jsonBody({ tag: "PERSON", scope: "WORKSPACE", workspaceId }),
+        ownerToken,
+      );
+      assert.equal(builtinConflict.res.status, 400);
+      assert.ok(builtinConflict.body.fieldErrors?.["tag"]);
+
+      const invalidPattern = await call(
+        "/api/ner-tags",
+        jsonBody({ tag: "bad-tag", scope: "WORKSPACE", workspaceId }),
+        ownerToken,
+      );
+      assert.equal(invalidPattern.res.status, 400);
+      assert.ok(invalidPattern.body.fieldErrors?.["tag"]);
+    });
+
+    await t.test("POS annotations require defined tags", async () => {
+      const valid = await call<{ posTag: string }>(
+        `/api/tokens/${firstTokenId}/pos`,
+        jsonBody({ pos: "NOUN" }, "PUT"),
+        ownerToken,
+      );
+      assert.equal(valid.res.status, 200);
+      assert.equal(valid.body.data.posTag, "NOUN");
+
+      const invalid = await call(
+        `/api/tokens/${firstTokenId}/pos`,
+        jsonBody({ pos: "SMOKE_UNDEFINED" }, "PUT"),
+        ownerToken,
+      );
+      assert.equal(invalid.res.status, 400);
+      assert.ok(invalid.body.fieldErrors?.["pos"]);
+
+      const invalidBatch = await call(
+        "/api/tokens/pos/batch",
+        jsonBody(
+          { updates: [{ tokenId: secondTokenId, pos: "SMOKE_UNDEFINED" }] },
+          "PUT",
+        ),
+        ownerToken,
+      );
+      assert.equal(invalidBatch.res.status, 400);
+      assert.ok(invalidBatch.body.fieldErrors?.["pos"]);
+
+      const validBatch = await call<Array<{ posTag: string; tokenId: string }>>(
+        "/api/tokens/pos/batch",
+        jsonBody(
+          {
+            updates: [
+              { tokenId: secondTokenId, pos: "VERB" },
+              { tokenId: firstTokenId, pos: null },
+            ],
+          },
+          "PUT",
+        ),
+        ownerToken,
+      );
+      assert.equal(validBatch.res.status, 200);
+      assert.equal(validBatch.body.data.length, 1);
+      assert.equal(validBatch.body.data[0]?.posTag, "VERB");
+      assert.equal(validBatch.body.data[0]?.tokenId, secondTokenId);
+
+      const customTag = `PSMK_${runId.toUpperCase()}`;
+      const createdTag = await call<{ id: string; tag: string; scope: string }>(
+        "/api/pos-tags",
+        jsonBody({
+          tag: customTag,
+          description: "smoke custom POS tag",
+          scope: "WORKSPACE",
+          workspaceId,
+        }),
+        ownerToken,
+      );
+      assert.equal(createdTag.res.status, 200);
+      assert.equal(createdTag.body.data.tag, customTag);
+      createdPosTagIds.push(createdTag.body.data.id);
+
+      const customAnnotation = await call<{ posTag: string }>(
+        `/api/tokens/${secondTokenId}/pos`,
+        jsonBody({ pos: customTag }, "PUT"),
+        ownerToken,
+      );
+      assert.equal(customAnnotation.res.status, 200);
+      assert.equal(customAnnotation.body.data.posTag, customTag);
+
+      const duplicateTag = await call(
+        "/api/pos-tags",
+        jsonBody({ tag: customTag, scope: "WORKSPACE", workspaceId }),
+        ownerToken,
+      );
+      assert.equal(duplicateTag.res.status, 400);
+      assert.ok(duplicateTag.body.fieldErrors?.["tag"]);
+
+      const builtinConflict = await call(
+        "/api/pos-tags",
+        jsonBody({ tag: "NOUN", scope: "WORKSPACE", workspaceId }),
+        ownerToken,
+      );
+      assert.equal(builtinConflict.res.status, 400);
+      assert.ok(builtinConflict.body.fieldErrors?.["tag"]);
     });
 
     await t.test("notifications are scoped to their owner", async () => {
@@ -288,6 +515,16 @@ test("API smoke: auth, workspace, document, notifications, cascade delete", asyn
   } finally {
     if (workspaceId && ownerToken) {
       await call(`/api/workspaces/${workspaceId}`, { method: "DELETE" }, ownerToken).catch(() => undefined);
+    }
+    if (createdNerTagIds.length > 0) {
+      await prisma.ner_tag_definitions
+        .deleteMany({ where: { id: { in: createdNerTagIds } } })
+        .catch(() => undefined);
+    }
+    if (createdPosTagIds.length > 0) {
+      await prisma.pos_tag_definitions
+        .deleteMany({ where: { id: { in: createdPosTagIds } } })
+        .catch(() => undefined);
     }
     const userIds = [ownerId, otherId].filter(Boolean);
     if (userIds.length > 0) {

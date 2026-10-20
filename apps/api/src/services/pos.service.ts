@@ -1,10 +1,12 @@
-import { NotFoundException } from "../common/errors.js";
+import { BadRequestException, NotFoundException } from "../common/errors.js";
 import {
   appendLog,
   BUILTIN_POS_TAGS,
   deletePosByTokenAndAnnotator,
   deletePosTag,
   findDocumentById,
+  findPosTagById,
+  findPosTagDefinition,
   findTokenById,
   listPosByDocument,
   listPosByToken,
@@ -19,6 +21,16 @@ import type {
   PosAnnotationDto,
   PosTagDefinitionDto,
 } from "../schemas/pos.schemas.js";
+
+const TAG_PATTERN = /^[A-Z][A-Z0-9_]{0,19}$/;
+
+function validationError(field: string, message: string): BadRequestException {
+  return new BadRequestException("Validation failed", { [field]: [message] });
+}
+
+function normalizeTag(value: string): string {
+  return value.trim().toUpperCase();
+}
 
 function toDto(a: {
   id: string;
@@ -57,12 +69,45 @@ export async function listTags(workspaceId?: string): Promise<PosTagDefinitionDt
   return [...builtins, ...customs];
 }
 
-export async function createTag(input: CreatePosTagInput): Promise<PosTagDefinitionDto> {
+export async function createTag(
+  userId: string,
+  input: CreatePosTagInput,
+): Promise<PosTagDefinitionDto> {
+  const tag = normalizeTag(input.tag);
+  if (!TAG_PATTERN.test(tag)) {
+    throw validationError(
+      "tag",
+      "Tag must start with an uppercase letter and contain only A-Z, 0-9, underscore (max 20 chars)",
+    );
+  }
+  if (BUILTIN_POS_TAGS.some((builtin) => builtin.tag === tag)) {
+    throw validationError("tag", `Tag conflicts with a built-in universal tag: ${tag}`);
+  }
+
+  const scope = input.scope;
+  let workspaceId: string | null = null;
+  if (scope === "WORKSPACE") {
+    if (!input.workspaceId) {
+      throw validationError("workspaceId", "workspaceId is required when scope=WORKSPACE");
+    }
+    await requireMember(input.workspaceId, userId);
+    workspaceId = input.workspaceId;
+  }
+
+  if (await findPosTagDefinition(tag, scope, workspaceId)) {
+    throw validationError(
+      "tag",
+      scope === "GLOBAL"
+        ? `Global tag already exists: ${tag}`
+        : `Tag already exists in this workspace: ${tag}`,
+    );
+  }
+
   const row = await savePosTag({
-    tag: input.tag.toUpperCase(),
+    tag,
     description: input.description ?? null,
-    scope: input.scope,
-    workspaceId: input.workspaceId ?? null,
+    scope,
+    workspaceId,
     builtin: false,
   });
   return {
@@ -76,6 +121,9 @@ export async function createTag(input: CreatePosTagInput): Promise<PosTagDefinit
 }
 
 export async function removeTag(id: string): Promise<void> {
+  if (!(await findPosTagById(id))) {
+    throw new NotFoundException("POS tag definition not found");
+  }
   await deletePosTag(id);
 }
 
@@ -89,6 +137,25 @@ async function tokenWorkspace(
   return { workspaceId: doc.workspaceId, documentId: doc.id };
 }
 
+async function effectiveTags(workspaceId: string): Promise<Set<string>> {
+  const custom = await listPosTags(workspaceId);
+  return new Set([
+    ...BUILTIN_POS_TAGS.map((tag) => tag.tag),
+    ...custom.map((tag) => tag.tag),
+  ]);
+}
+
+async function validatePosTag(workspaceId: string, value: string): Promise<string> {
+  const posTag = normalizeTag(value);
+  if (!posTag) {
+    throw validationError("pos", "pos is required");
+  }
+  if (!(await effectiveTags(workspaceId)).has(posTag)) {
+    throw validationError("pos", `Invalid POS tag: ${posTag}`);
+  }
+  return posTag;
+}
+
 export async function updateTokenPos(
   tokenId: string,
   userId: string,
@@ -100,18 +167,19 @@ export async function updateTokenPos(
     await deletePosByTokenAndAnnotator(tokenId, userId);
     return null;
   }
+  const posTag = await validatePosTag(workspaceId, pos);
   const row = await upsertPosAnnotation({
     tokenId,
     documentId,
     annotatorId: userId,
-    posTag: pos.toUpperCase(),
+    posTag,
   });
   await appendLog({
     workspaceId,
     userId,
     actionType: "POS_TAGGED",
-    entityId: row.id,
-    payloadJson: JSON.stringify({ tokenId, pos }),
+    entityId: tokenId,
+    payloadJson: JSON.stringify({ posTag, documentId }),
   });
   return toDto(row);
 }
