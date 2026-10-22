@@ -14,12 +14,12 @@ import { verifyAccessToken } from "../lib/jwt.js";
  * - Server push: `pushToUser()` delivers MESSAGE frames to a recipient's
  *   sessions (called from `notifyWorkspaceMembers`).
  *
- * Sessions live in memory; a server restart drops them and the client's
- * `reconnectDelay: 5000` reconnects. No SockJS websocket transport — the
- * client falls back to xhr-polling automatically.
+ * Sessions live in memory with automatic TTL reaping for abandoned connections.
+ * No SockJS websocket transport — the client falls back to xhr-polling automatically.
  */
 
 const POLL_HOLD_MS = 20_000;
+const SESSION_TTL_MS = 60_000;
 
 interface PendingPoll {
   id: number;
@@ -35,6 +35,7 @@ interface Session {
   pending: PendingPoll | null;
   pollSeq: number;
   alive: boolean;
+  lastActiveAt: number;
 }
 
 const sessions = new Map<string, Session>();
@@ -42,8 +43,19 @@ const sessions = new Map<string, Session>();
 function getOrCreateSession(id: string): Session {
   let s = sessions.get(id);
   if (!s) {
-    s = { id, userId: null, subscriptions: new Map(), queue: [], pending: null, pollSeq: 0, alive: true };
+    s = {
+      id,
+      userId: null,
+      subscriptions: new Map(),
+      queue: [],
+      pending: null,
+      pollSeq: 0,
+      alive: true,
+      lastActiveAt: Date.now(),
+    };
     sessions.set(id, s);
+  } else {
+    s.lastActiveAt = Date.now();
   }
   return s;
 }
@@ -76,6 +88,7 @@ export function openSession(sessionId: string): boolean {
 export function pollSession(sessionId: string): Promise<string | null> {
   const s = sessions.get(sessionId);
   if (!s || !s.alive) return Promise.resolve(null);
+  s.lastActiveAt = Date.now();
   if (s.queue.length > 0) {
     const frames = s.queue.splice(0, s.queue.length);
     return Promise.resolve(`a[${frames.map((f) => JSON.stringify(f)).join(",")}]`);
@@ -168,6 +181,7 @@ function handleUnsubscribe(s: Session, frame: StompFrame): void {
 export async function receiveFromClient(sessionId: string, payload: unknown): Promise<void> {
   const s = getOrCreateSession(sessionId);
   if (!s.alive) return;
+  s.lastActiveAt = Date.now();
   const chunks = Array.isArray(payload) ? payload : [payload];
   for (const chunk of chunks) {
     if (typeof chunk !== "string") continue;
@@ -201,6 +215,7 @@ export function pushToUser(userId: string, destination: string, body: unknown): 
     if (!s.alive || s.userId !== userId) continue;
     const sub = s.subscriptions.get(destination);
     if (!sub) continue;
+    s.lastActiveAt = Date.now();
     s.queue.push(
       `MESSAGE\nsubscription:${sub}\nmessage-id:${randomUUID()}\ndestination:${destination}\ncontent-type:application/json\n\n${text}\0`,
     );
@@ -214,4 +229,22 @@ export function closeSession(sessionId: string): void {
   s.alive = false;
   if (s.pending) settlePending(s, `c[3000,"Go away!"]`);
   sessions.delete(sessionId);
+}
+
+/** Reaps sessions that have been abandoned without active long-polling. */
+export function reapAbandonedSessions(): number {
+  const now = Date.now();
+  let reaped = 0;
+  for (const [id, s] of sessions.entries()) {
+    if (!s.alive || (!s.pending && now - s.lastActiveAt > SESSION_TTL_MS)) {
+      closeSession(id);
+      reaped++;
+    }
+  }
+  return reaped;
+}
+
+const reaperTimer = setInterval(reapAbandonedSessions, 30_000);
+if (typeof reaperTimer.unref === "function") {
+  reaperTimer.unref();
 }

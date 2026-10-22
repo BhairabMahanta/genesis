@@ -1311,7 +1311,7 @@ export async function listWsdSenses(
       workspace_id: workspaceId,
       ...(word ? { word: { equals: word, mode: "insensitive" } } : {}),
     },
-    orderBy: { word: "asc" },
+    orderBy: [{ word: "asc" }, { sense_label: "asc" }],
   });
   return rows.map(mapWsdSense);
 }
@@ -1327,6 +1327,25 @@ export async function updateWsdSense(
   const result = await prisma.wsd_sense.updateMany({ where: { id }, data });
   if (result.count === 0) return undefined;
   return findWsdSense(id);
+}
+
+export async function findWsdSenseByWordAndLabel(
+  workspaceId: string,
+  word: string,
+  senseLabel: string,
+): Promise<WsdSenseEntity | undefined> {
+  const row = await prisma.wsd_sense.findFirst({
+    where: {
+      workspace_id: workspaceId,
+      word: { equals: word, mode: "insensitive" },
+      sense_label: { equals: senseLabel, mode: "insensitive" },
+    },
+  });
+  return row ? mapWsdSense(row) : undefined;
+}
+
+export async function countWsdAnnotationsBySense(senseId: string): Promise<number> {
+  return prisma.wsd_annotation.count({ where: { sense_id: senseId } });
 }
 
 export async function deleteWsdSense(id: string): Promise<void> {
@@ -1427,6 +1446,66 @@ export async function listWsdByWorkspace(workspaceId: string): Promise<WsdAnnota
     orderBy: { created_at: "asc" },
   });
   return rows.map(mapWsdAnnotation);
+}
+
+export async function listWsdAnnotationsForDocument(
+  workspaceId: string,
+  documentId: string,
+): Promise<Array<WsdAnnotationEntity & { senseLabel: string | null }>> {
+  const rows = await prisma.wsd_annotation.findMany({
+    where: {
+      workspace_id: workspaceId,
+      document_id: documentId,
+    },
+    include: {
+      wsd_sense: {
+        select: {
+          sense_label: true,
+        },
+      },
+    },
+    orderBy: { created_at: "asc" },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    workspaceId: r.workspace_id,
+    tokenId: r.token_id,
+    documentId: r.document_id,
+    senseId: r.sense_id,
+    senseLabel: r.wsd_sense?.sense_label ?? null,
+    annotatorId: r.annotator_id,
+    createdAt: requiredIso(r.created_at),
+  }));
+}
+
+export async function listWsdAnnotationsForToken(
+  workspaceId: string,
+  tokenId: string,
+): Promise<Array<WsdAnnotationEntity & { senseLabel: string | null }>> {
+  const rows = await prisma.wsd_annotation.findMany({
+    where: {
+      workspace_id: workspaceId,
+      token_id: tokenId,
+    },
+    include: {
+      wsd_sense: {
+        select: {
+          sense_label: true,
+        },
+      },
+    },
+    orderBy: { updated_at: "desc" },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    workspaceId: r.workspace_id,
+    tokenId: r.token_id,
+    documentId: r.document_id,
+    senseId: r.sense_id,
+    senseLabel: r.wsd_sense?.sense_label ?? null,
+    annotatorId: r.annotator_id,
+    createdAt: requiredIso(r.created_at),
+  }));
 }
 
 export async function deleteWsdAnnotation(id: string): Promise<void> {

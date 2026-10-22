@@ -104,7 +104,7 @@ export default function PosEditor({ workspaceId, workspaceName }: PosEditorProps
     if (workspaceId) refreshTags();
   }, [workspaceId, refreshTags]);
 
-  const currentUser = user?.username ?? null;
+  const currentUser = user?.id ?? null;
 
   const { saveSession, containerRef, lastScrollRef, handleScroll } = useEditorSession({
     workspaceId,

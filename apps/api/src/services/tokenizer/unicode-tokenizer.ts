@@ -6,6 +6,10 @@
  * Bodo, Marathi, Nepali, Odia, Punjabi, Tamil, Telugu, Malayalam,
  * Kannada, Gujarati), punctuation chars form single-char tokens, and
  * anything else is skipped. ZWNJ/ZWJ join Indic conjuncts into words.
+ *
+ * Internal apostrophes (' and ’) between word characters are preserved
+ * within words to support Indic vowel elision (e.g., Assamese গ'ল, হ'ল)
+ * as well as contractions (e.g., don't, it's).
  */
 
 export interface TokenResult {
@@ -56,6 +60,10 @@ function isWordCharacter(ch: string): boolean {
   return isIndianScriptConnector(cp);
 }
 
+function isApostrophe(ch: string): boolean {
+  return ch === "'" || ch === "’";
+}
+
 function isPunctuation(ch: string): boolean {
   if (/\p{Ps}|\p{Pe}|\p{Pc}|\p{Pd}|\p{Pi}|\p{Pf}|\p{Po}/u.test(ch)) return true;
   const cp = ch.codePointAt(0) ?? 0;
@@ -83,7 +91,20 @@ export function tokenize(text: string, startOffset = 0): TokenResult[] {
     }
     if (isWordCharacter(ch)) {
       const tokenStart = pos;
-      while (pos < chars.length && isWordCharacter(chars[pos] as string)) pos++;
+      while (pos < chars.length) {
+        if (isWordCharacter(chars[pos] as string)) {
+          pos++;
+        } else if (
+          isApostrophe(chars[pos] as string) &&
+          pos + 1 < chars.length &&
+          isWordCharacter(chars[pos + 1] as string)
+        ) {
+          // Internal apostrophe elision (Assamese গ'ল, হ'ল) or contraction (don't)
+          pos++;
+        } else {
+          break;
+        }
+      }
       const tokenText = chars.slice(tokenStart, pos).join("");
       const begin = (utf16Offsets[tokenStart] as number) + startOffset;
       const end = (pos < chars.length

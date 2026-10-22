@@ -1,21 +1,29 @@
-import { BadRequestException, NotFoundException } from "../common/errors.js";
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from "../common/errors.js";
 import {
   appendLog,
+  countWsdAnnotationsBySense,
   deleteWsdAnnotation,
   deleteWsdSense,
   findDocumentById,
+  findMember,
   findTokenById,
   findWsdAnnotation,
   findWsdSense,
-  listWsdByDocument,
-  listWsdByToken,
+  findWsdSenseByWordAndLabel,
+  listWsdAnnotationsForDocument,
+  listWsdAnnotationsForToken,
   listWsdByWorkspace,
   listWsdSenses,
   saveWsdAnnotation,
   saveWsdSense,
   updateWsdSense,
 } from "../store/prisma.js";
-import { requireMember } from "./workspace.service.js";
+import { requireAdmin, requireMember } from "./workspace.service.js";
 import type {
   CreateSenseInput,
   CreateWsdAnnotationInput,
@@ -67,12 +75,8 @@ export async function createSense(
   userId: string,
   input: CreateSenseInput,
 ): Promise<WsdSenseDto> {
-  await requireMember(workspaceId, userId);
-  const clash = (await listWsdSenses(workspaceId)).some(
-    (s) =>
-      s.word.toLowerCase() === input.word.toLowerCase() &&
-      s.senseLabel.toLowerCase() === input.senseLabel.toLowerCase(),
-  );
+  await requireAdmin(workspaceId, userId);
+  const clash = await findWsdSenseByWordAndLabel(workspaceId, input.word, input.senseLabel);
   if (clash) throw new BadRequestException("A sense with this word and label already exists");
   return toSenseDto(
     await saveWsdSense({
@@ -90,9 +94,13 @@ export async function updateSense(
   senseId: string,
   input: CreateSenseInput,
 ): Promise<WsdSenseDto> {
-  await requireMember(workspaceId, userId);
+  await requireAdmin(workspaceId, userId);
   const row = await findWsdSense(senseId);
   if (!row || row.workspaceId !== workspaceId) throw new NotFoundException("Sense not found");
+  const clash = await findWsdSenseByWordAndLabel(workspaceId, input.word, input.senseLabel);
+  if (clash && clash.id !== senseId) {
+    throw new BadRequestException("A sense with this word and label already exists");
+  }
   const updated = await updateWsdSense(senseId, {
     word: input.word,
     senseLabel: input.senseLabel,
@@ -107,9 +115,13 @@ export async function removeSense(
   userId: string,
   senseId: string,
 ): Promise<void> {
-  await requireMember(workspaceId, userId);
+  await requireAdmin(workspaceId, userId);
   const row = await findWsdSense(senseId);
   if (!row || row.workspaceId !== workspaceId) throw new NotFoundException("Sense not found");
+  const inUse = await countWsdAnnotationsBySense(senseId);
+  if (inUse > 0) {
+    throw new ConflictException(`This sense is used by ${inUse} annotations`);
+  }
   await deleteWsdSense(senseId);
 }
 
@@ -148,8 +160,16 @@ export async function annotationsForToken(
   tokenId: string,
 ): Promise<WsdAnnotationDto[]> {
   await requireMember(workspaceId, userId);
-  const rows = (await listWsdByToken(tokenId)).filter((a) => a.workspaceId === workspaceId);
-  return Promise.all(rows.map(toAnnotationDto));
+  const rows = await listWsdAnnotationsForToken(workspaceId, tokenId);
+  return rows.map((r) => ({
+    id: r.id,
+    tokenId: r.tokenId,
+    senseId: r.senseId,
+    senseLabel: r.senseLabel,
+    annotatorId: r.annotatorId,
+    workspaceId: r.workspaceId,
+    timestamp: r.createdAt,
+  }));
 }
 
 export async function annotationsForDocument(
@@ -160,30 +180,16 @@ export async function annotationsForDocument(
   await requireMember(workspaceId, userId);
   const doc = await findDocumentById(documentId);
   if (!doc) throw new NotFoundException("Document not found");
-  // Include token-bound annotations even when documentId was null at write time.
-  const direct = await listWsdByDocument(workspaceId, documentId);
-  const byTokenDoc = await listWsdTokenScan(workspaceId, documentId);
-  const seen = new Set(direct.map((d) => d.id));
-  const directDtos = await Promise.all(direct.map(toAnnotationDto));
-  const scanDtos = await Promise.all(
-    byTokenDoc.filter((d) => !seen.has(d.id)).map(toAnnotationDto),
-  );
-  return [...directDtos, ...scanDtos];
-}
-
-async function listWsdTokenScan(
-  workspaceId: string,
-  documentId: string,
-): Promise<Awaited<ReturnType<typeof listWsdByWorkspace>>> {
-  // Scan annotations whose token belongs to this document (covers legacy null
-  // documentId writes from before V8).
-  const out = [];
-  for (const annotation of await listWsdByWorkspace(workspaceId)) {
-    if (annotation.workspaceId !== workspaceId) continue;
-    const token = await findTokenById(annotation.tokenId);
-    if (token && token.documentId === documentId) out.push(annotation);
-  }
-  return out;
+  const rows = await listWsdAnnotationsForDocument(workspaceId, documentId);
+  return rows.map((r) => ({
+    id: r.id,
+    tokenId: r.tokenId,
+    senseId: r.senseId,
+    senseLabel: r.senseLabel,
+    annotatorId: r.annotatorId,
+    workspaceId: r.workspaceId,
+    timestamp: r.createdAt,
+  }));
 }
 
 export async function removeAnnotation(
@@ -195,6 +201,11 @@ export async function removeAnnotation(
   const row = await findWsdAnnotation(annotationId);
   if (!row || row.workspaceId !== workspaceId) {
     throw new NotFoundException("Annotation not found");
+  }
+  const membership = await findMember(workspaceId, userId);
+  const isAdmin = membership?.role === "ADMIN";
+  if (row.annotatorId !== userId && !isAdmin) {
+    throw new ForbiddenException("Cannot delete another annotator's annotation");
   }
   await deleteWsdAnnotation(annotationId);
 }

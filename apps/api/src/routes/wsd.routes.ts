@@ -121,7 +121,7 @@ wsdRoutes.get("/workspaces/:workspaceId/wsd/export", authMiddleware, async (c) =
   return new Response(tsv, {
     status: 200,
     headers: {
-      "Content-Type": "text/tab-separated-values",
+      "Content-Type": "text/tab-separated-values; charset=utf-8",
       "Content-Disposition": `attachment; filename="wsd_annotations_${workspaceId}.tsv"`,
     },
   });
@@ -133,7 +133,7 @@ wsdRoutes.get("/workspaces/:workspaceId/wsd/export/consensus", authMiddleware, a
   return new Response(tsv, {
     status: 200,
     headers: {
-      "Content-Type": "text/tab-separated-values",
+      "Content-Type": "text/tab-separated-values; charset=utf-8",
       "Content-Disposition": `attachment; filename="wsd_consensus_${workspaceId}.tsv"`,
     },
   });

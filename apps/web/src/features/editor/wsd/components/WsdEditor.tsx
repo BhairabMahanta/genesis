@@ -48,7 +48,7 @@ interface WsdEditorProps {
 export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps) {
   const router = useRouter();
   const { user } = useAuth();
-  const currentUser = user?.username ?? null;
+  const currentUser = user?.id ?? null;
 
   // API data state
   const [editorData, setEditorData] = useState<WorkspaceEditorResponse | null>(null);
