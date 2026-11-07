@@ -14,7 +14,8 @@ genesis/
 ├── legacy/
 │   └── genesis-java/           # Original Java 21 / Spring Boot monolith (reference only)
 ├── scripts/
-│   └── dev.mjs                 # Local launcher: both services, fixed ports, prefixed logs
+│   ├── dev.mjs                 # Local launcher: Docker + migrations + demo seed + both services
+│   └── seed-demo.mjs           # Idempotent demo account and workspace
 ├── .env.example                # Local development defaults
 ├── SETUP.md                    # Full local setup and troubleshooting
 ├── BACKEND_MIGRATION.md        # Migration outcomes and validation evidence
@@ -39,47 +40,31 @@ For the full walkthrough, see [**`SETUP.md`**](SETUP.md).
 
 - Node.js 20+
 - pnpm 9+
-- PostgreSQL 15+ (tested on PostgreSQL 18; the schema is applied from the legacy Flyway SQL)
+- Docker Desktop (the launcher starts it, PostgreSQL, and migrations for you)
 
-### 1. Create the database and apply the schema
-
-```bash
-createdb -U postgres genesis
-```
-
-Apply `legacy/genesis-java/genesis-api/src/main/resources/db/migration/V1__baseline.sql` through `V8__wsd_annotation_document_id.sql` in filename order with `psql` (see [SETUP.md](SETUP.md) for the PowerShell loop).
-
-### 2. Install dependencies and generate Prisma
+### 1. Install and run
 
 ```bash
 pnpm install
-pnpm --filter @genesis/api exec prisma generate
-```
-
-### 3. Start the stack
-
-From the repository root:
-
-```powershell
 pnpm dev
 ```
 
-This starts both services with prefixed terminal logs:
+`pnpm dev` starts Docker Desktop if needed, runs PostgreSQL + migrations, starts both services with prefixed logs, and seeds the demo account:
 
 | Service | URL | Log prefix |
 |---|---|---|
 | API | `http://localhost:8099` | `[BACKEND]` |
 | Web | `http://localhost:3000` | `[FRONTEND]` |
 
-Open `http://localhost:3000`, then sign up and create a workspace. Health check: `http://localhost:8099/api/health` returns `UP` only when the database is reachable.
+Open `http://localhost:3000` and sign in with the development demo account:
 
-The launcher reads optional `.env.local` / `.env` files from the repository root. Copy `.env.example` to `.env` to override the defaults:
+| Username | Email | Password |
+|---|---|---|
+| `demo` | `demo@genesis.local` | `Demo@12345` |
 
-```powershell
-Copy-Item .env.example .env
-```
+The seeded workspace **"Hemkosh WSD Demo (Assamese)"** contains two documents and ten senses (draft glosses). Seeding is idempotent; run it manually with `pnpm seed:demo`, or disable it with `DEV_SEED_DEMO=false`. To use your own PostgreSQL, set `DEV_DOCKER=false` in `.env`. Health check: `http://localhost:8099/api/health` returns `UP` only when the database is reachable.
 
-Port `8099` is the local default because `8080` is commonly occupied. The launcher refuses to start if a configured port is taken instead of silently moving the frontend to `3001`. Use `pnpm dev:api` or `pnpm dev:web` to run one service. See [SETUP.md](SETUP.md#step-4--start-the-full-stack) for details.
+The launcher reads optional `.env.local` / `.env` files from the repository root, and creates `.env` from `.env.example` on first run. Port `8099` is the local default because `8080` is commonly occupied. The launcher refuses to start if a configured port is taken instead of silently moving the frontend to `3001`. Use `pnpm dev:api` or `pnpm dev:web` to run one service. See [SETUP.md](SETUP.md#quick-start-one-command) for details.
 
 ## Tests and checks
 
@@ -108,6 +93,8 @@ pnpm build
 |---|---|---|
 | `API_PORT` | Dev launcher | API port set for `pnpm dev`, default `8099` |
 | `WEB_PORT` | Dev launcher | Web port set for `pnpm dev`, default `3000` |
+| `DEV_DOCKER` | Dev launcher | `auto` (start Docker when `DATABASE_URL` is `localhost:5432`), `true`, or `false` |
+| `DEV_SEED_DEMO` | Dev launcher | Seed the `demo` account on startup, default `true` |
 | `API_REQUEST_LOGS` | Dev launcher / API | `true` under `pnpm dev`; off in production unless explicitly enabled |
 | `DATABASE_URL` | API | PostgreSQL connection string (`DB_URL` is accepted as an alias) |
 | `PORT` | API | Listener port when running the API directly, default `8080` |

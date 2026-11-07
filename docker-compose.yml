@@ -1,0 +1,91 @@
+# Genesis backend stack: PostgreSQL + schema migrations + the TypeScript API.
+#
+#   docker compose up -d --build     # start (copy .env.example to .env first)
+#   docker compose logs -f api
+#   docker compose down              # stop; add -v to also wipe the database
+#
+# The API listens on http://localhost:${API_PORT:-8099}. Run the web app on the host with
+# `pnpm dev:web`; its defaults already point at that port. (The legacy Java stack under
+# legacy/genesis-java is no longer used and is not part of this file.)
+
+name: genesis
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: genesis-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: genesis
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}
+    # Loopback only: lets host tools and `pnpm dev:api` reach the database, nothing else.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - genesis_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d genesis"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: applies V1-V8 (legacy Flyway baseline) then apps/api/db/migrations, then exits.
+  # Safe to re-run; applied versions are tracked in genesis_schema_migrations.
+  migrate:
+    image: postgres:15-alpine
+    container_name: genesis-migrate
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: genesis
+    volumes:
+      - ./scripts/db-migrate.sh:/migrate.sh:ro
+      - ./legacy/genesis-java/genesis-api/src/main/resources/db/migration:/migrations/legacy:ro
+      - ./apps/api/db/migrations:/migrations/api:ro
+    entrypoint: ["sh", "/migrate.sh"]
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: genesis-api
+    container_name: genesis-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/genesis
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (32+ characters) in .env}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      STORAGE_LOCAL_BASE_PATH: /app/data/uploads
+      API_REQUEST_LOGS: ${API_REQUEST_LOGS:-true}
+    ports:
+      - "${API_PORT:-8099}:8080"
+    volumes:
+      - genesis_uploads:/app/data/uploads
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:8080/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+volumes:
+  genesis_pgdata:
+  genesis_uploads:

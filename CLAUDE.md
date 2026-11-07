@@ -19,6 +19,7 @@ The frontend has **no mock/offline mode**; it always authenticates and talks to 
 Run from the repository root:
 
 ```bash
+docker compose up -d --build   # backend in Docker: PostgreSQL + migrations + API on :8099
 pnpm dev          # API + web, prefixed logs ([BACKEND] / [FRONTEND])
 pnpm dev:api      # API only
 pnpm dev:web      # web only
@@ -47,11 +48,14 @@ pnpm --filter @genesis/api exec prisma generate
 
 `pnpm dev` runs `scripts/dev.mjs`, which:
 
+- starts Docker Desktop and the `genesis-db` container when `DATABASE_URL` points at `localhost:5432` (`DEV_DOCKER=auto`; the engine is started with `docker desktop start`, then the app is launched as a fallback);
+- applies migrations with `docker compose run --rm migrate` (idempotent);
 - starts the API on **`http://localhost:8099`** and the web app on **`http://localhost:3000`**;
 - sets `NEXT_PUBLIC_API_URL`, `INTERNAL_API_URL`, and `CORS_ALLOWED_ORIGINS` for the children;
-- reads optional `.env.local` / `.env` from the repository root (shell env wins);
+- reads optional `.env.local` / `.env` from the repository root (shell env wins), creating `.env` from `.env.example` if missing;
 - refuses to start when a configured port is occupied instead of letting Next move to `3001`;
-- prefixes child output with `[BACKEND]` / `[FRONTEND]`;
+- prefixes child output with `[BACKEND]` / `[FRONTEND]` (`[docker]` / `[seed]` for the bootstrap);
+- waits for `/api/health`, then seeds the `demo` account (`demo` / `Demo@12345`) and the "Hemkosh WSD Demo (Assamese)" workspace; `DEV_SEED_DEMO=false` skips it;
 - stops both processes together.
 
 Port `8099` is the local default because `0.0.0.0:8080` is commonly occupied by Apache (`PEMHTTPD-x64`) on this machine. The API's raw code default remains `8080` when run outside the launcher.
@@ -96,7 +100,7 @@ API conventions:
 - Responses use the legacy `ApiResponse<T>` envelope (`success`, `data`, `message`, optional `fieldErrors`).
 - Request validation belongs in `src/schemas/`; business logic in `src/services/`; Prisma access in `src/store/`.
 - The Hono app is shared by the server and tests; only `src/index.ts` opens a listener.
-- The schema is owned by the legacy Flyway migrations `V1`–`V8`. Prisma is a typed query client only — do **not** use `prisma migrate` or `prisma db push`.
+- The schema is the legacy Flyway baseline `V1`–`V8` plus TypeScript-owned migrations `V9+` in `apps/api/db/migrations`; `scripts/db-migrate.sh` (the compose `migrate` service) applies both and tracks them. Prisma is a typed query client only — do **not** use `prisma migrate` or `prisma db push`. To change the schema, add the next `V<n>__*.sql` and mirror it in `apps/api/prisma/schema.prisma`.
 - Notifications use persisted rows plus SockJS xhr-polling and a minimal STOMP broker. Native WebSocket is intentionally not implemented.
 
 Web conventions:
