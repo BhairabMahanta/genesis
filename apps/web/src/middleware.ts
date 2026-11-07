@@ -12,7 +12,7 @@ import {
 // re-check server-side when serverFetch hits a 401).
 // `/api/export` is included so proactive refresh runs before the route
 // handler proxies the blob download.
-const PROTECTED_PREFIXES = ['/home', '/workspace', '/api/export'];
+const PROTECTED_PREFIXES = ['/home', '/workspace', '/api/export', '/api/wsd'];
 
 // Routes that should redirect to /home when the user already has a session.
 const GUEST_ONLY_PREFIXES = ['/login', '/signup'];

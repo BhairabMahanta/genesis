@@ -6,7 +6,7 @@
 export interface RawSenseInput {
   word: string;
   senseLabel?: string | null;
-  description?: string | null;
+  gloss?: string | null;
   examples?: string | null;
 }
 
@@ -32,7 +32,7 @@ export function parseSenseImportContent(content: string, filename?: string): Raw
     try {
       const parsed = JSON.parse(clean);
       if (Array.isArray(parsed)) {
-        return parsed.map(mapObjectToSenseInput).filter((s): s is RawSenseInput => Boolean(s.word));
+        return parsed.map(normalizeSenseEntry).filter((s): s is RawSenseInput => Boolean(s.word));
       }
     } catch {
       // Fall through to other formats if JSON.parse fails
@@ -46,7 +46,7 @@ export function parseSenseImportContent(content: string, filename?: string): Raw
     for (const line of lines) {
       try {
         const obj = JSON.parse(line);
-        const mapped = mapObjectToSenseInput(obj);
+        const mapped = normalizeSenseEntry(obj);
         if (mapped.word) entries.push(mapped);
       } catch {
         // Skip unparseable line
@@ -62,8 +62,9 @@ export function parseSenseImportContent(content: string, filename?: string): Raw
 
 /**
  * Normalizes property keys from various OCR / dictionary formats into RawSenseInput.
+ * Used for uploaded files and for JSON request bodies, so both accept the same aliases.
  */
-function mapObjectToSenseInput(obj: Record<string, unknown>): RawSenseInput {
+export function normalizeSenseEntry(obj: Record<string, unknown>): RawSenseInput {
   const getProp = (...keys: string[]): string | undefined => {
     for (const key of keys) {
       if (typeof obj[key] === 'string' && obj[key].trim()) return obj[key].trim();
@@ -79,13 +80,13 @@ function mapObjectToSenseInput(obj: Record<string, unknown>): RawSenseInput {
 
   const word = getProp('word', 'headword', 'entry', 'lemma', 'senseWord', 'text') || '';
   const senseLabel = getProp('senseLabel', 'sense_label', 'label', 'sense', 'senseId', 'id');
-  const description = getProp('description', 'gloss', 'meaning', 'definition');
+  const gloss = getProp('gloss', 'description', 'meaning', 'definition');
   const examples = getProp('examples', 'example', 'example_sentence', 'sentence', 'sentences');
 
   return {
     word,
     senseLabel: senseLabel || null,
-    description: description || null,
+    gloss: gloss || null,
     examples: examples || null,
   };
 }
@@ -99,17 +100,17 @@ function parseDelimited(lines: string[], delimiter: string): RawSenseInput[] {
   const headers = splitDelimitedLine(lines[0], delimiter).map(h => h.trim().toLowerCase());
   const wordIdx = headers.findIndex(h => ['word', 'headword', 'entry', 'lemma', 'senseword'].includes(h));
   const labelIdx = headers.findIndex(h => ['senselabel', 'sense_label', 'label', 'sense', 'senseid', 'id'].includes(h));
-  const descIdx = headers.findIndex(h => ['description', 'gloss', 'meaning', 'definition'].includes(h));
+  const glossIdx = headers.findIndex(h => ['gloss', 'description', 'meaning', 'definition'].includes(h));
   const exIdx = headers.findIndex(h => ['examples', 'example', 'example_sentence', 'sentence'].includes(h));
 
   if (wordIdx === -1) {
-    // If no explicit header matched, assume columns: [word, senseLabel, description, examples]
+    // If no explicit header matched, assume columns: [word, senseLabel, gloss, examples]
     return lines.slice(1).map(line => {
       const cols = splitDelimitedLine(line, delimiter);
       return {
         word: cols[0]?.trim() || '',
         senseLabel: cols[1]?.trim() || null,
-        description: cols[2]?.trim() || null,
+        gloss: cols[2]?.trim() || null,
         examples: cols[3]?.trim() || null,
       };
     }).filter(s => Boolean(s.word));
@@ -124,7 +125,7 @@ function parseDelimited(lines: string[], delimiter: string): RawSenseInput[] {
     results.push({
       word,
       senseLabel: labelIdx !== -1 ? cols[labelIdx]?.trim() || null : null,
-      description: descIdx !== -1 ? cols[descIdx]?.trim() || null : null,
+      gloss: glossIdx !== -1 ? cols[glossIdx]?.trim() || null : null,
       examples: exIdx !== -1 ? cols[exIdx]?.trim() || null : null,
     });
   }

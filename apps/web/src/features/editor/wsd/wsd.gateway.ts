@@ -3,11 +3,13 @@ import 'server-only';
 import { ApiResponse } from '@/server/contracts/common';
 import { serverFetch } from '@/server/http';
 import {
+  AmbiguousWordMatch,
   CreateWsdSenseRequest,
   ImportSensesResult,
   PaginatedSenses,
   SenseSearchParams,
   WsdAnnotation,
+  WsdRejection,
   WsdSense,
 } from './wsd.contracts';
 
@@ -119,6 +121,49 @@ export async function deleteSense(
 ): Promise<void> {
   await serverFetch<ApiResponse<void>>(
     `/api/workspaces/${workspaceId}/wsd/senses/${senseId}`,
+    { method: 'DELETE' },
+  );
+}
+
+export async function matchAmbiguousWords(
+  workspaceId: string,
+  forms: string[],
+): Promise<AmbiguousWordMatch[]> {
+  const res = await serverFetch<ApiResponse<AmbiguousWordMatch[]>>(
+    `/api/workspaces/${workspaceId}/wsd/words/match`,
+    { method: 'POST', body: JSON.stringify({ forms }) },
+  );
+  return res.data;
+}
+
+export async function listRejectionsForDocument(
+  workspaceId: string,
+  documentId: string,
+): Promise<WsdRejection[]> {
+  const res = await serverFetch<ApiResponse<WsdRejection[]>>(
+    `/api/workspaces/${workspaceId}/wsd/documents/${documentId}/rejections`,
+  );
+  return res.data;
+}
+
+export async function rejectSense(
+  workspaceId: string,
+  tokenId: string,
+  senseId: string,
+): Promise<void> {
+  await serverFetch<ApiResponse<void>>(`/api/workspaces/${workspaceId}/wsd/rejections`, {
+    method: 'POST',
+    body: JSON.stringify({ tokenId, senseId }),
+  });
+}
+
+export async function unrejectSense(
+  workspaceId: string,
+  tokenId: string,
+  senseId: string,
+): Promise<void> {
+  await serverFetch<ApiResponse<void>>(
+    `/api/workspaces/${workspaceId}/wsd/rejections/${tokenId}/${senseId}`,
     { method: 'DELETE' },
   );
 }

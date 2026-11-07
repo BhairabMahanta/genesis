@@ -185,7 +185,8 @@ export interface WsdSenseEntity {
   workspaceId: string;
   word: string;
   senseLabel: string;
-  description: string | null;
+  gloss: string | null;
+  examples: string | null;
   createdAt: string;
 }
 

@@ -1,4 +1,4 @@
-import { parseSenseImportContent, type ImportSensesResult, type RawSenseInput } from "./wsd-importer.service.js";
+import { normalizeSenseEntry, parseSenseImportContent, type ImportSensesResult } from "./wsd-importer.service.js";
 import {
   BadRequestException,
   ConflictException,
@@ -9,27 +9,34 @@ import {
   appendLog,
   countWsdAnnotationsBySense,
   deleteWsdAnnotation,
+  deleteWsdRejection,
   deleteWsdSense,
   findDocumentById,
   findMember,
   findTokenById,
+  findTokensByIds,
   findWsdAnnotation,
   findWsdSense,
   findWsdSenseByWordAndLabel,
   listWsdAnnotationsForDocument,
   listWsdAnnotationsForToken,
   listWsdByWorkspace,
+  listWsdRejections,
   listWsdSenses,
+  matchWsdWords,
   searchWsdSenses,
   bulkInsertWsdSenses,
   saveWsdAnnotation,
+  saveWsdRejection,
   saveWsdSense,
   updateWsdSense,
 } from "../store/prisma.js";
 import { requireAdmin, requireMember } from "./workspace.service.js";
 import type {
+  AmbiguousWordMatchDto,
   CreateSenseInput,
   CreateWsdAnnotationInput,
+  RejectSenseInput,
   WsdAnnotationDto,
   WsdSenseDto,
 } from "../schemas/wsd.schemas.js";
@@ -39,9 +46,17 @@ function toSenseDto(s: {
   workspaceId: string;
   word: string;
   senseLabel: string;
-  description: string | null;
+  gloss: string | null;
+  examples: string | null;
 }): WsdSenseDto {
-  return s;
+  return {
+    id: s.id,
+    workspaceId: s.workspaceId,
+    word: s.word,
+    senseLabel: s.senseLabel,
+    gloss: s.gloss,
+    examples: s.examples,
+  };
 }
 
 async function toAnnotationDto(a: {
@@ -116,24 +131,36 @@ export async function searchSenses(
 export async function importSenses(
   workspaceId: string,
   userId: string,
-  rawContentOrEntries: string | RawSenseInput[],
+  rawContentOrEntries: string | Array<Record<string, unknown>>,
   options: { filename?: string; mode?: "skip" | "overwrite" } = {},
 ): Promise<ImportSensesResult> {
   await requireAdmin(workspaceId, userId);
-  const entries: RawSenseInput[] = typeof rawContentOrEntries === "string"
+  const entries = typeof rawContentOrEntries === "string"
     ? parseSenseImportContent(rawContentOrEntries, options.filename)
-    : rawContentOrEntries;
+    : rawContentOrEntries.map(normalizeSenseEntry).filter((e) => Boolean(e.word));
 
   return bulkInsertWsdSenses(workspaceId, entries, { mode: options.mode });
 }
 
 
+/** Which of `forms` are in the workspace's ambiguous-word list (drives editor highlighting). */
+export async function matchAmbiguousWords(
+  workspaceId: string,
+  userId: string,
+  forms: string[],
+): Promise<AmbiguousWordMatchDto[]> {
+  await requireMember(workspaceId, userId);
+  return matchWsdWords(workspaceId, forms);
+}
+
+// Any workspace member may add a sense (annotators hit words the dictionary lacks);
+// edit, delete and bulk import stay admin-only.
 export async function createSense(
   workspaceId: string,
   userId: string,
   input: CreateSenseInput,
 ): Promise<WsdSenseDto> {
-  await requireAdmin(workspaceId, userId);
+  await requireMember(workspaceId, userId);
   const clash = await findWsdSenseByWordAndLabel(workspaceId, input.word, input.senseLabel);
   if (clash) throw new BadRequestException("A sense with this word and label already exists");
   return toSenseDto(
@@ -141,7 +168,8 @@ export async function createSense(
       workspaceId,
       word: input.word,
       senseLabel: input.senseLabel,
-      description: input.description ?? null,
+      gloss: input.gloss ?? null,
+      examples: input.examples ?? null,
     }),
   );
 }
@@ -162,7 +190,8 @@ export async function updateSense(
   const updated = await updateWsdSense(senseId, {
     word: input.word,
     senseLabel: input.senseLabel,
-    description: input.description ?? null,
+    gloss: input.gloss ?? null,
+    examples: input.examples ?? null,
   });
   if (!updated) throw new NotFoundException("Sense not found");
   return toSenseDto(updated);
@@ -202,6 +231,7 @@ export async function annotate(
     senseId: input.senseId,
     annotatorId: userId,
   });
+  await deleteWsdRejection(input.tokenId, input.senseId, userId);
   await appendLog({
     workspaceId,
     userId,
@@ -210,6 +240,52 @@ export async function annotate(
     payloadJson: JSON.stringify({ tokenId: row.tokenId, senseId: row.senseId }),
   });
   return toAnnotationDto(row);
+}
+
+/** ✗: this sense does not fit here. Persisted per annotator; also drops their ✓ on that sense. */
+export async function rejectSense(
+  workspaceId: string,
+  userId: string,
+  input: RejectSenseInput,
+): Promise<void> {
+  await requireMember(workspaceId, userId);
+  const sense = await findWsdSense(input.senseId);
+  if (!sense || sense.workspaceId !== workspaceId) throw new NotFoundException("Sense not found");
+  const token = await findTokenById(input.tokenId);
+  if (!token) throw new NotFoundException("Token not found");
+  const doc = await findDocumentById(token.documentId);
+  if (!doc) throw new NotFoundException("Document not found");
+  const mine = (await listWsdAnnotationsForToken(workspaceId, input.tokenId)).find(
+    (a) => a.annotatorId === userId && a.senseId === input.senseId,
+  );
+  if (mine) await deleteWsdAnnotation(mine.id);
+  await saveWsdRejection({
+    workspaceId,
+    documentId: doc.id,
+    tokenId: input.tokenId,
+    senseId: input.senseId,
+    annotatorId: userId,
+  });
+}
+
+export async function unrejectSense(
+  workspaceId: string,
+  userId: string,
+  tokenId: string,
+  senseId: string,
+): Promise<void> {
+  await requireMember(workspaceId, userId);
+  await deleteWsdRejection(tokenId, senseId, userId);
+}
+
+/** The caller's own ✗ marks for a document. */
+export async function rejectionsForDocument(
+  workspaceId: string,
+  userId: string,
+  documentId: string,
+): Promise<Array<{ tokenId: string; senseId: string }>> {
+  await requireMember(workspaceId, userId);
+  return listWsdRejections(workspaceId, documentId, userId);
 }
 
 export async function annotationsForToken(
@@ -239,11 +315,16 @@ export async function annotationsForDocument(
   const doc = await findDocumentById(documentId);
   if (!doc) throw new NotFoundException("Document not found");
   const rows = await listWsdAnnotationsForDocument(workspaceId, documentId);
+  const tokens = new Map(
+    (await findTokensByIds(rows.map((r) => r.tokenId))).map((t) => [t.id, t]),
+  );
   return rows.map((r) => ({
     id: r.id,
     tokenId: r.tokenId,
     senseId: r.senseId,
     senseLabel: r.senseLabel,
+    tokenForm: tokens.get(r.tokenId)?.form ?? null,
+    sentenceIndex: tokens.get(r.tokenId)?.sentenceIndex ?? null,
     annotatorId: r.annotatorId,
     workspaceId: r.workspaceId,
     timestamp: r.createdAt,
@@ -266,6 +347,41 @@ export async function removeAnnotation(
     throw new ForbiddenException("Cannot delete another annotator's annotation");
   }
   await deleteWsdAnnotation(annotationId);
+}
+
+function csvCell(value: string | null): string {
+  const v = value ?? "";
+  return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+/**
+ * The workspace's sense dictionary as a file the bulk importer reads back unchanged.
+ * `jsonl` is lossless; `csv` carries a UTF-8 BOM so Excel reads Assamese correctly.
+ */
+export async function exportSenses(
+  workspaceId: string,
+  userId: string,
+  format: "jsonl" | "csv",
+): Promise<string> {
+  await requireMember(workspaceId, userId);
+  const senses = await listWsdSenses(workspaceId);
+  if (format === "jsonl") {
+    return senses
+      .map((s) =>
+        JSON.stringify({
+          word: s.word,
+          sense_label: s.senseLabel,
+          ...(s.gloss ? { gloss: s.gloss } : {}),
+          ...(s.examples ? { examples: s.examples } : {}),
+        }),
+      )
+      .join("\n");
+  }
+  const lines = ["word,sense_label,gloss,examples"];
+  for (const s of senses) {
+    lines.push([s.word, s.senseLabel, s.gloss, s.examples].map(csvCell).join(","));
+  }
+  return "\uFEFF" + lines.join("\r\n");
 }
 
 /** Replace tab/newline in TSV cells so the output stays parseable. */

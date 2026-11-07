@@ -21,7 +21,7 @@ test("wsd-importer: parses JSON array of senses", () => {
   assert.equal(senses.length, 2);
   assert.equal(senses[0].word, "বতাহ");
   assert.equal(senses[0].senseLabel, "বতাহ-১");
-  assert.equal(senses[0].description, "বায়ু; বতাহৰ সোঁত।");
+  assert.equal(senses[0].gloss, "বায়ু; বতাহৰ সোঁত।");
   assert.equal(senses[0].examples, "কালি নিশা বৰ বতাহ বলিছিল।");
 
   assert.equal(senses[1].word, "পানী");
@@ -38,7 +38,7 @@ test("wsd-importer: parses JSONL format", () => {
   assert.equal(senses.length, 2);
   assert.equal(senses[0].word, "গছ");
   assert.equal(senses[0].senseLabel, "গছ-১");
-  assert.equal(senses[0].description, "উদ্ভিদ");
+  assert.equal(senses[0].gloss, "উদ্ভিদ");
   assert.equal(senses[1].examples, "শাল গছ");
 });
 
@@ -53,11 +53,11 @@ test("wsd-importer: parses CSV format with quotes and commas", () => {
   assert.equal(senses.length, 2);
   assert.equal(senses[0].word, "বতাহ");
   assert.equal(senses[0].senseLabel, "বতাহ-১");
-  assert.equal(senses[0].description, "বায়ু, বতাহৰ সোঁত");
+  assert.equal(senses[0].gloss, "বায়ু, বতাহৰ সোঁত");
   assert.equal(senses[0].examples, "বতাহ বলিছে");
 
   assert.equal(senses[1].word, "নৈ");
-  assert.equal(senses[1].description, "নদী, নৈৰ পানী");
+  assert.equal(senses[1].gloss, "নদী, নৈৰ পানী");
 });
 
 test("wsd-importer: parses TSV format", () => {
@@ -71,7 +71,7 @@ test("wsd-importer: parses TSV format", () => {
   assert.equal(senses.length, 2);
   assert.equal(senses[0].word, "কিতাপ");
   assert.equal(senses[0].senseLabel, "কিতাপ-১");
-  assert.equal(senses[0].description, "পুথি বা গ্ৰন্থ");
+  assert.equal(senses[0].gloss, "পুথি বা গ্ৰন্থ");
 });
 
 test("wsd-importer: handles UTF-8 BOM", () => {

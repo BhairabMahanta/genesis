@@ -13,6 +13,7 @@ import {
   Trash2,
   Check,
   UploadCloud,
+  Download,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -58,14 +59,16 @@ export function WsdSenseInventory({ workspaceId, onSensesChanged }: WsdSenseInve
   const [adding, setAdding] = useState(false);
   const [newWord, setNewWord] = useState('');
   const [newLabel, setNewLabel] = useState('');
-  const [newDescription, setNewDescription] = useState('');
+  const [newGloss, setNewGloss] = useState('');
+  const [newExamples, setNewExamples] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   // Edit sense state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editWord, setEditWord] = useState('');
   const [editLabel, setEditLabel] = useState('');
-  const [editDescription, setEditDescription] = useState('');
+  const [editGloss, setEditGloss] = useState('');
+  const [editExamples, setEditExamples] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
 
   // Debounce search query input (300ms)
@@ -112,7 +115,8 @@ export function WsdSenseInventory({ workspaceId, onSensesChanged }: WsdSenseInve
     const result = await createSenseAction(workspaceId, {
       word: newWord.trim(),
       senseLabel: newLabel.trim(),
-      description: newDescription.trim() || null,
+      gloss: newGloss.trim() || null,
+      examples: newExamples.trim() || null,
     });
     setSubmitting(false);
     if (!result.ok) {
@@ -123,7 +127,8 @@ export function WsdSenseInventory({ workspaceId, onSensesChanged }: WsdSenseInve
     toast.success(`Added sense for "${result.data.word}"`);
     setNewWord('');
     setNewLabel('');
-    setNewDescription('');
+    setNewGloss('');
+    setNewExamples('');
     setAdding(false);
     fetchSenses(1, debouncedQuery);
     notifyChanged();
@@ -133,7 +138,8 @@ export function WsdSenseInventory({ workspaceId, onSensesChanged }: WsdSenseInve
     setEditingId(sense.id);
     setEditWord(sense.word);
     setEditLabel(sense.senseLabel);
-    setEditDescription(sense.description ?? '');
+    setEditGloss(sense.gloss ?? '');
+    setEditExamples(sense.examples ?? '');
   };
 
   const handleSaveEdit = async (senseId: string) => {
@@ -142,7 +148,8 @@ export function WsdSenseInventory({ workspaceId, onSensesChanged }: WsdSenseInve
     const result = await updateSenseAction(workspaceId, senseId, {
       word: editWord.trim(),
       senseLabel: editLabel.trim(),
-      description: editDescription.trim() || null,
+      gloss: editGloss.trim() || null,
+      examples: editExamples.trim() || null,
     });
     setSavingEdit(false);
     if (!result.ok) {
@@ -256,11 +263,22 @@ export function WsdSenseInventory({ workspaceId, onSensesChanged }: WsdSenseInve
               }`
             )}
           </span>
-          {totalPages > 1 && (
-            <span>
-              Page {page} / {totalPages}
+          <span className="inline-flex items-center gap-1.5">
+            {totalPages > 1 && (
+              <span>
+                Page {page} / {totalPages}
+              </span>
+            )}
+            <span className="inline-flex items-center gap-1" title="Download the whole dictionary (re-importable)">
+              <Download className="w-3 h-3" />
+              <a href={`/api/wsd/${workspaceId}/dictionary?format=jsonl`} download className="underline hover:text-slate-700 dark:hover:text-slate-200">
+                JSONL
+              </a>
+              <a href={`/api/wsd/${workspaceId}/dictionary?format=csv`} download className="underline hover:text-slate-700 dark:hover:text-slate-200">
+                CSV
+              </a>
             </span>
-          )}
+          </span>
         </div>
       </div>
 
@@ -296,9 +314,16 @@ export function WsdSenseInventory({ workspaceId, onSensesChanged }: WsdSenseInve
               className="h-8 text-xs bg-white dark:bg-slate-900"
             />
             <Textarea
-              placeholder="Definition / Gloss / Examples (optional)"
-              value={newDescription}
-              onChange={e => setNewDescription(e.target.value)}
+              placeholder="Gloss (meaning, optional)"
+              value={newGloss}
+              onChange={e => setNewGloss(e.target.value)}
+              rows={2}
+              className="text-xs bg-white dark:bg-slate-900 resize-none"
+            />
+            <Textarea
+              placeholder="Example sentence(s) (optional)"
+              value={newExamples}
+              onChange={e => setNewExamples(e.target.value)}
               rows={2}
               className="text-xs bg-white dark:bg-slate-900 resize-none"
             />
@@ -395,9 +420,16 @@ export function WsdSenseInventory({ workspaceId, onSensesChanged }: WsdSenseInve
                           className="h-7 text-xs"
                         />
                         <Textarea
-                          value={editDescription}
-                          onChange={e => setEditDescription(e.target.value)}
-                          placeholder="Description / Gloss"
+                          value={editGloss}
+                          onChange={e => setEditGloss(e.target.value)}
+                          placeholder="Gloss (meaning)"
+                          rows={2}
+                          className="text-xs resize-none"
+                        />
+                        <Textarea
+                          value={editExamples}
+                          onChange={e => setEditExamples(e.target.value)}
+                          placeholder="Example sentence(s)"
                           rows={2}
                           className="text-xs resize-none"
                         />
@@ -427,9 +459,14 @@ export function WsdSenseInventory({ workspaceId, onSensesChanged }: WsdSenseInve
                           <div className="inline-block px-1.5 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900/50 truncate max-w-full">
                             {sense.senseLabel}
                           </div>
-                          {sense.description && (
+                          {sense.gloss && (
                             <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 line-clamp-2 leading-relaxed">
-                              {sense.description}
+                              {sense.gloss}
+                            </p>
+                          )}
+                          {sense.examples && (
+                            <p className="text-xs italic text-slate-500 mt-1 line-clamp-2 leading-relaxed">
+                              &ldquo;{sense.examples}&rdquo;
                             </p>
                           )}
                         </div>

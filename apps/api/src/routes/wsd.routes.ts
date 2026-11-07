@@ -11,14 +11,24 @@ import {
   createSense,
   exportConsensus,
   exportPerAnnotator,
+  exportSenses,
+  rejectSense,
+  rejectionsForDocument,
+  unrejectSense,
   listSenses,
+  matchAmbiguousWords,
   importSenses,
   searchSenses,
   removeAnnotation,
   removeSense,
   updateSense,
 } from "../services/wsd.service.js";
-import { createSenseSchema, createWsdAnnotationSchema } from "../schemas/wsd.schemas.js";
+import {
+  createSenseSchema,
+  createWsdAnnotationSchema,
+  matchWordsSchema,
+  rejectSenseSchema,
+} from "../schemas/wsd.schemas.js";
 
 function parseOrThrow<T>(schema: z.ZodType<T>, body: unknown): T {
   const result = schema.safeParse(body);
@@ -63,6 +73,57 @@ wsdRoutes.get("/workspaces/:workspaceId/wsd/senses", authMiddleware, async (c) =
   );
 });
 
+
+wsdRoutes.post("/workspaces/:workspaceId/wsd/words/match", authMiddleware, async (c) => {
+  const { forms } = parseOrThrow(matchWordsSchema, await c.req.json());
+  return c.json(
+    success(await matchAmbiguousWords(needParam(c, "workspaceId"), c.get("userId"), forms)),
+    200,
+  );
+});
+
+wsdRoutes.get("/workspaces/:workspaceId/wsd/senses/export", authMiddleware, async (c) => {
+  const workspaceId = needParam(c, "workspaceId");
+  const format = c.req.query("format") === "csv" ? "csv" : "jsonl";
+  const body = await exportSenses(workspaceId, c.get("userId"), format);
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type":
+        format === "csv" ? "text/csv; charset=utf-8" : "application/x-ndjson; charset=utf-8",
+      "Content-Disposition": `attachment; filename="wsd_dictionary_${workspaceId}.${format}"`,
+    },
+  });
+});
+
+wsdRoutes.post("/workspaces/:workspaceId/wsd/rejections", authMiddleware, async (c) => {
+  const input = parseOrThrow(rejectSenseSchema, await c.req.json());
+  await rejectSense(needParam(c, "workspaceId"), c.get("userId"), input);
+  return c.json(success(null, "Sense rejected"), 200);
+});
+
+wsdRoutes.delete("/workspaces/:workspaceId/wsd/rejections/:tokenId/:senseId", authMiddleware, async (c) => {
+  await unrejectSense(
+    needParam(c, "workspaceId"),
+    c.get("userId"),
+    needParam(c, "tokenId"),
+    needParam(c, "senseId"),
+  );
+  return c.json(success(null, "Rejection removed"), 200);
+});
+
+wsdRoutes.get("/workspaces/:workspaceId/wsd/documents/:documentId/rejections", authMiddleware, async (c) => {
+  return c.json(
+    success(
+      await rejectionsForDocument(
+        needParam(c, "workspaceId"),
+        c.get("userId"),
+        needParam(c, "documentId"),
+      ),
+    ),
+    200,
+  );
+});
 
 wsdRoutes.post("/workspaces/:workspaceId/wsd/import", authMiddleware, async (c) => {
   const workspaceId = needParam(c, "workspaceId");

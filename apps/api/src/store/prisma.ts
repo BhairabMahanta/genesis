@@ -1271,7 +1271,8 @@ function mapWsdSense(row: wsd_sense): WsdSenseEntity {
     workspaceId: row.workspace_id,
     word: row.word,
     senseLabel: row.sense_label,
-    description: row.description,
+    gloss: row.gloss,
+    examples: row.examples,
     createdAt: requiredIso(row.created_at),
   };
 }
@@ -1286,7 +1287,8 @@ export async function saveWsdSense(
       workspace_id: input.workspaceId,
       word: input.word,
       sense_label: input.senseLabel,
-      description: input.description,
+      gloss: input.gloss,
+      examples: input.examples,
       created_at: timestamp,
       created_by: AUDIT,
       updated_at: timestamp,
@@ -1322,7 +1324,8 @@ export async function searchWsdSenses(
           OR: [
             { word: { contains: filter.query, mode: "insensitive" } },
             { sense_label: { contains: filter.query, mode: "insensitive" } },
-            { description: { contains: filter.query, mode: "insensitive" } },
+            { gloss: { contains: filter.query, mode: "insensitive" } },
+            { examples: { contains: filter.query, mode: "insensitive" } },
           ],
         }
       : {}),
@@ -1349,7 +1352,7 @@ export async function searchWsdSenses(
 export interface RawSenseInput {
   word: string;
   senseLabel?: string | null;
-  description?: string | null;
+  gloss?: string | null;
   examples?: string | null;
 }
 
@@ -1385,12 +1388,8 @@ export async function bulkInsertWsdSenses(
     const senseLabel = item.senseLabel?.trim() || (word + "-sense-" + (i + 1));
     const key = word.toLowerCase() + ":::" + senseLabel.toLowerCase();
 
-    let fullDescription = item.description?.trim() || null;
-    if (item.examples?.trim()) {
-      fullDescription = fullDescription
-        ? fullDescription + "\nExamples: " + item.examples.trim()
-        : "Examples: " + item.examples.trim();
-    }
+    const gloss = item.gloss?.trim() || null;
+    const examples = item.examples?.trim() || null;
 
     if (existingMap.has(key)) {
       if (options.mode === "overwrite") {
@@ -1398,7 +1397,8 @@ export async function bulkInsertWsdSenses(
         await prisma.wsd_sense.update({
           where: { id },
           data: {
-            description: fullDescription,
+            gloss,
+            examples,
             updated_at: timestamp,
             updated_by: AUDIT,
           },
@@ -1421,7 +1421,8 @@ export async function bulkInsertWsdSenses(
       workspace_id: workspaceId,
       word,
       sense_label: senseLabel,
-      description: fullDescription,
+      gloss,
+      examples,
       created_at: timestamp,
       created_by: AUDIT,
       updated_at: timestamp,
@@ -1445,6 +1446,78 @@ export async function bulkInsertWsdSenses(
 }
 
 
+/** Distinct sense words (the workspace's ambiguous-word list) matching any of `forms`, case-insensitively. */
+export async function matchWsdWords(
+  workspaceId: string,
+  forms: string[],
+): Promise<Array<{ word: string; senseCount: number }>> {
+  if (forms.length === 0) return [];
+  const lowered = [...new Set(forms.map((f) => f.toLowerCase()))];
+  const rows = await prisma.$queryRaw<Array<{ word: string; count: bigint }>>(
+    Prisma.sql`SELECT word, COUNT(*) AS count FROM wsd_sense
+               WHERE workspace_id = ${workspaceId}::uuid AND lower(word) = ANY(${lowered}::text[])
+               GROUP BY word`,
+  );
+  return rows.map((r) => ({ word: r.word, senseCount: Number(r.count) }));
+}
+
+// --- WSD sense rejections (✗) -------------------------------------------
+
+export async function saveWsdRejection(input: {
+  workspaceId: string;
+  documentId: string;
+  tokenId: string;
+  senseId: string;
+  annotatorId: string;
+}): Promise<void> {
+  await prisma.wsd_sense_rejection.upsert({
+    where: {
+      token_id_sense_id_annotator_id: {
+        token_id: input.tokenId,
+        sense_id: input.senseId,
+        annotator_id: input.annotatorId,
+      },
+    },
+    create: {
+      id: randomUUID(),
+      workspace_id: input.workspaceId,
+      document_id: input.documentId,
+      token_id: input.tokenId,
+      sense_id: input.senseId,
+      annotator_id: input.annotatorId,
+    },
+    update: {},
+  });
+}
+
+export async function deleteWsdRejection(
+  tokenId: string,
+  senseId: string,
+  annotatorId: string,
+): Promise<void> {
+  await prisma.wsd_sense_rejection.deleteMany({
+    where: { token_id: tokenId, sense_id: senseId, annotator_id: annotatorId },
+  });
+}
+
+export async function listWsdRejections(
+  workspaceId: string,
+  documentId: string,
+  annotatorId: string,
+): Promise<Array<{ tokenId: string; senseId: string }>> {
+  const rows = await prisma.wsd_sense_rejection.findMany({
+    where: { workspace_id: workspaceId, document_id: documentId, annotator_id: annotatorId },
+    select: { token_id: true, sense_id: true },
+  });
+  return rows.map((r) => ({ tokenId: r.token_id, senseId: r.sense_id }));
+}
+
+export async function findTokensByIds(ids: string[]): Promise<TokenEntity[]> {
+  if (ids.length === 0) return [];
+  const rows = await prisma.token.findMany({ where: { id: { in: ids } } });
+  return rows.map(mapToken);
+}
+
 export async function listWsdSenses(
   workspaceId: string,
   word?: string,
@@ -1466,7 +1539,8 @@ export async function updateWsdSense(
   const data: Prisma.wsd_senseUncheckedUpdateInput = { updated_at: now(), updated_by: AUDIT };
   if (patch.word !== undefined) data.word = patch.word;
   if (patch.senseLabel !== undefined) data.sense_label = patch.senseLabel;
-  if (patch.description !== undefined) data.description = patch.description;
+  if (patch.gloss !== undefined) data.gloss = patch.gloss;
+  if (patch.examples !== undefined) data.examples = patch.examples;
   const result = await prisma.wsd_sense.updateMany({ where: { id }, data });
   if (result.count === 0) return undefined;
   return findWsdSense(id);

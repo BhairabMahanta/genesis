@@ -2,11 +2,13 @@
 
 import { type ActionResult, toActionError } from '@/server/contracts/common';
 import type {
+  AmbiguousWordMatch,
   CreateWsdSenseRequest,
   ImportSensesResult,
   PaginatedSenses,
   SenseSearchParams,
   WsdAnnotation,
+  WsdRejection,
   WsdSense,
 } from './wsd.contracts';
 import {
@@ -16,7 +18,11 @@ import {
   getAnnotationsForDocument,
   getAnnotationsForToken,
   importSenses,
+  listRejectionsForDocument,
   listSenses,
+  matchAmbiguousWords,
+  rejectSense,
+  unrejectSense,
   searchSenses,
   updateSense,
   upsertAnnotation,
@@ -30,7 +36,7 @@ export async function createSenseAction(
     const sense = await createSense(workspaceId, request);
     return { ok: true, data: sense };
   } catch (err) {
-    return toActionError(err, 'Failed to create sense. Admin role is required.');
+    return toActionError(err, 'Failed to create sense.');
   }
 }
 
@@ -141,5 +147,55 @@ export async function deleteAnnotationAction(
     return { ok: true, data: undefined };
   } catch (err) {
     return toActionError(err, 'Failed to remove annotation.');
+  }
+}
+
+export async function matchAmbiguousWordsAction(
+  workspaceId: string,
+  forms: string[],
+): Promise<ActionResult<AmbiguousWordMatch[]>> {
+  try {
+    const data = await matchAmbiguousWords(workspaceId, forms);
+    return { ok: true, data };
+  } catch (err) {
+    return toActionError(err, 'Failed to match ambiguous words.');
+  }
+}
+
+export async function listRejectionsForDocumentAction(
+  workspaceId: string,
+  documentId: string,
+): Promise<ActionResult<WsdRejection[]>> {
+  try {
+    const data = await listRejectionsForDocument(workspaceId, documentId);
+    return { ok: true, data };
+  } catch (err) {
+    return toActionError(err, 'Failed to load your rejected senses.');
+  }
+}
+
+export async function rejectSenseAction(
+  workspaceId: string,
+  tokenId: string,
+  senseId: string,
+): Promise<ActionResult<void>> {
+  try {
+    await rejectSense(workspaceId, tokenId, senseId);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return toActionError(err, 'Failed to reject sense.');
+  }
+}
+
+export async function unrejectSenseAction(
+  workspaceId: string,
+  tokenId: string,
+  senseId: string,
+): Promise<ActionResult<void>> {
+  try {
+    await unrejectSense(workspaceId, tokenId, senseId);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return toActionError(err, 'Failed to undo rejection.');
   }
 }
