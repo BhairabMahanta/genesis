@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { BadRequestException } from "../common/errors.js";
+import { readMultipartFile } from "../common/multipart.js";
 import { success } from "../common/response.js";
 import { needParam } from "../common/params.js";
 import { authMiddleware } from "../middleware/auth.js";
@@ -9,14 +10,36 @@ import {
   annotationsForDocument,
   annotationsForToken,
   createSense,
+  createSenseAndAnnotate,
+  exportAnnotatedOccurrences,
   exportConsensus,
   exportPerAnnotator,
+  exportSenseInventory,
+  importSenses,
   listSenses,
   removeAnnotation,
   removeSense,
   updateSense,
 } from "../services/wsd.service.js";
-import { createSenseSchema, createWsdAnnotationSchema } from "../schemas/wsd.schemas.js";
+import {
+  createSenseSchema,
+  createSenseWithAnnotationSchema,
+  createWsdAnnotationSchema,
+} from "../schemas/wsd.schemas.js";
+
+function downloadResponse(file: {
+  body: Uint8Array | string;
+  contentType: string;
+  filename: string;
+}): Response {
+  return new Response(file.body as never, {
+    status: 200,
+    headers: {
+      "Content-Type": file.contentType,
+      "Content-Disposition": `attachment; filename="${file.filename}"`,
+    },
+  });
+}
 
 function parseOrThrow<T>(schema: z.ZodType<T>, body: unknown): T {
   const result = schema.safeParse(body);
@@ -50,6 +73,25 @@ wsdRoutes.post("/workspaces/:workspaceId/wsd/senses", authMiddleware, async (c) 
   );
 });
 
+wsdRoutes.post(
+  "/workspaces/:workspaceId/wsd/senses/import",
+  authMiddleware,
+  async (c) => {
+    const parsed = (await c.req.parseBody()) as Record<string, unknown>;
+    const file = await readMultipartFile(parsed);
+    return c.json(
+      success(
+        await importSenses(
+          needParam(c, "workspaceId"),
+          c.get("userId"),
+          file,
+        ),
+      ),
+      200,
+    );
+  },
+);
+
 wsdRoutes.put("/workspaces/:workspaceId/wsd/senses/:senseId", authMiddleware, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const input = parseOrThrow(createSenseSchema, body);
@@ -70,6 +112,25 @@ wsdRoutes.delete("/workspaces/:workspaceId/wsd/senses/:senseId", authMiddleware,
   await removeSense(needParam(c, "workspaceId"), c.get("userId"), needParam(c, "senseId"));
   return c.json(success(null, "Sense deleted successfully"), 200);
 });
+
+wsdRoutes.post(
+  "/workspaces/:workspaceId/wsd/annotations/with-sense",
+  authMiddleware,
+  async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const input = parseOrThrow(createSenseWithAnnotationSchema, body);
+    return c.json(
+      success(
+        await createSenseAndAnnotate(
+          needParam(c, "workspaceId"),
+          c.get("userId"),
+          input,
+        ),
+      ),
+      200,
+    );
+  },
+);
 
 wsdRoutes.post("/workspaces/:workspaceId/wsd/annotations", authMiddleware, async (c) => {
   const body = await c.req.json().catch(() => ({}));
@@ -138,6 +199,30 @@ wsdRoutes.get("/workspaces/:workspaceId/wsd/export/consensus", authMiddleware, a
     },
   });
 });
+
+wsdRoutes.get("/workspaces/:workspaceId/wsd/export/senses", authMiddleware, async (c) => {
+  return downloadResponse(
+    await exportSenseInventory(
+      needParam(c, "workspaceId"),
+      c.get("userId"),
+      c.req.query("format") ?? "csv",
+    ),
+  );
+});
+
+wsdRoutes.get(
+  "/workspaces/:workspaceId/wsd/export/annotations",
+  authMiddleware,
+  async (c) => {
+    return downloadResponse(
+      await exportAnnotatedOccurrences(
+        needParam(c, "workspaceId"),
+        c.get("userId"),
+        c.req.query("format") ?? "csv",
+      ),
+    );
+  },
+);
 
 // Extra aliases from BACKEND_MIGRATION.md §3.4 (kept for client compat).
 wsdRoutes.get("/workspaces/:workspaceId/wsd/annotations/:tokenId", authMiddleware, async (c) => {

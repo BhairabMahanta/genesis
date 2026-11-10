@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
 } from "../common/errors.js";
 import {
+  countWsdWorkspaceProgress,
   deleteDocumentEntity,
   deleteMember,
   deleteStoredFile,
@@ -68,8 +69,26 @@ async function toWorkspaceResponse(workspaceId: string): Promise<WorkspaceRespon
   if (!ws) throw new NotFoundException("Workspace not found");
   const owner = await findUserById(ws.ownerId);
   const docs = await listDocumentsByWorkspace(workspaceId);
-  const annotated = docs.filter((d) => d.status === "COMPLETE").length;
   const total = docs.length;
+  const isWsd = ws.annotationType === "WSD";
+
+  // WSD progress is annotation coverage of the ambiguous-word occurrences, not
+  // just "documents marked complete". It is token-weighted across the
+  // workspace, so documents with no matching words do not drag it down.
+  const annotated = isWsd
+    ? docs.filter((d) => d.status === "COMPLETE" || (d.progress ?? 0) > 0).length
+    : docs.filter((d) => d.status === "COMPLETE").length;
+
+  let progressPercentage = total === 0 ? 0 : Math.round((annotated * 100) / total);
+  if (isWsd) {
+    const coverage = await countWsdWorkspaceProgress(workspaceId);
+    // One decimal so the first few tags in a large corpus do not display 0%.
+    progressPercentage =
+      coverage.ambiguousTotal === 0
+        ? 0
+        : Math.round((coverage.annotated * 1000) / coverage.ambiguousTotal) / 10;
+  }
+
   return {
     id: ws.id,
     name: ws.name,
@@ -80,7 +99,7 @@ async function toWorkspaceResponse(workspaceId: string): Promise<WorkspaceRespon
     ownerUsername: owner?.username ?? "",
     documentCount: total,
     annotatedDocumentCount: annotated,
-    progressPercentage: total === 0 ? 0 : Math.round((annotated * 100) / total),
+    progressPercentage,
     createdAt: ws.createdAt,
     updatedAt: ws.updatedAt,
   };

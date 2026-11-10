@@ -199,6 +199,28 @@ export interface WsdAnnotationEntity {
   createdAt: string;
 }
 
+/**
+ * A WSD annotation joined with the display fields needed by the CSV/XLSX
+ * export: token position, sentence context, document name and sense text.
+ */
+export interface WsdAnnotationDetailEntity {
+  id: string;
+  workspaceId: string;
+  documentId: string;
+  documentName: string;
+  sentenceIndex: number;
+  tokenIndex: number;
+  tokenId: string;
+  word: string;
+  sentenceText: string;
+  senseId: string;
+  senseLabel: string;
+  senseDescription: string | null;
+  annotatorId: string;
+  annotatorName: string;
+  timestamp: string;
+}
+
 export type NotificationType = "INFO" | "SUCCESS" | "WARNING" | "ERROR";
 
 export interface NotificationEntity {

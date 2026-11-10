@@ -22,3 +22,30 @@ export interface WsdAnnotation {
     workspaceId: string;
     timestamp: string;
 }
+
+export interface WsdSenseImportRowError {
+    rowNumber: number;
+    message: string;
+}
+
+export interface WsdSenseImportSummary {
+    sheetName: string;
+    words: number;
+    sensesInFile: number;
+    created: number;
+    skippedDuplicates: number;
+    skippedInvalid: number;
+    duplicatesInFile: number;
+    errors: WsdSenseImportRowError[];
+}
+
+export interface CreateSenseWithAnnotationRequest {
+    tokenId: string;
+    senseLabel: string;
+    description?: string | null;
+}
+
+export interface WsdSenseWithAnnotation {
+    sense: WsdSense;
+    annotation: WsdAnnotation;
+}

@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
@@ -23,6 +24,7 @@ import {
   saveEditorSessionAction,
 } from '@/features/editor/core/editor.actions';
 import {
+  createSenseAndAnnotateAction,
   deleteAnnotationAction,
   listAnnotationsForDocumentAction,
   listSensesAction,
@@ -43,9 +45,14 @@ import { toast } from 'sonner';
 interface WsdEditorProps {
   workspaceId: string;
   workspaceName: string;
+  isAdmin: boolean;
 }
 
-export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps) {
+export default function WsdEditor({
+  workspaceId,
+  workspaceName,
+  isAdmin,
+}: WsdEditorProps) {
   const router = useRouter();
   const { user } = useAuth();
   const currentUser = user?.id ?? null;
@@ -62,6 +69,12 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
   const [senses, setSenses] = useState<WsdSense[]>([]);
   const [sensesLoading, setSensesLoading] = useState(false);
   const [senseFilter, setSenseFilter] = useState('');
+  const [addingSense, setAddingSense] = useState(false);
+  const [newSenseLabel, setNewSenseLabel] = useState('');
+  const [newSenseDescription, setNewSenseDescription] = useState('');
+  const [savingSense, setSavingSense] = useState(false);
+  const [inventoryRefreshKey, setInventoryRefreshKey] = useState(0);
+  const [ambiguousWords, setAmbiguousWords] = useState<Set<string>>(new Set());
 
   // tokenId → all annotations on that token, across annotators. Pre-loaded per
   // document so existing tags show on open (not just after clicking a token).
@@ -137,6 +150,23 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
     };
   }, [workspaceId, workspaceName, containerRef, lastScrollRef]);
 
+  // The full lexicon drives the "ambiguous occurrences" stat and progress bar.
+  // It is separate from the per-token sense list in the right pane.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const result = await listSensesAction(workspaceId);
+      if (!cancelled && result.ok) {
+        setAmbiguousWords(
+          new Set(result.data.map((sense) => sense.word.toLowerCase())),
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
   // Load a document's content + all its annotations when switching.
   const loadDocumentContent = useCallback(
     async (docIndex: number) => {
@@ -153,6 +183,9 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
       setSelectedToken(null);
       setSenses([]);
       setSenseFilter('');
+      setAddingSense(false);
+      setNewSenseLabel('');
+      setNewSenseDescription('');
       setAnnotationsByToken({});
 
       const doc = editorData.documents[docIndex];
@@ -188,6 +221,9 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
     async (token: TokenDto) => {
       setSelectedToken(token);
       setSenseFilter('');
+      setAddingSense(false);
+      setNewSenseLabel('');
+      setNewSenseDescription('');
       setSensesLoading(true);
       const sensesResult = await listSensesAction(workspaceId, token.form);
       setSensesLoading(false);
@@ -202,6 +238,9 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
         // Clicking the selected token again deselects it.
         setSelectedToken(null);
         setSenses([]);
+        setAddingSense(false);
+        setNewSenseLabel('');
+        setNewSenseDescription('');
         return;
       }
       selectToken(token);
@@ -215,33 +254,78 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
     if (selectedToken) selectToken(selectedToken);
   }, [selectedToken, selectToken]);
 
-  // Move selection to the next token (loading its senses). With nothing
-  // selected, anchors on the first token — the keyboard-only entry point.
+  const isAmbiguousToken = useCallback(
+    (token: TokenDto) => ambiguousWords.has(token.form.toLowerCase()),
+    [ambiguousWords],
+  );
+
+  // Move selection to the next ambiguous token (loading its senses). If the
+  // document has no ambiguous tokens at all, fall back to every token so
+  // annotators can still add new senses manually.
   const advanceToNextToken = useCallback(() => {
     const tokens = documentContent?.tokens;
     if (!tokens || tokens.length === 0) return;
+    const hasAmbiguous = tokens.some(isAmbiguousToken);
+
     if (!selectedToken) {
-      selectToken(tokens[0]);
+      const first = hasAmbiguous
+        ? tokens.findIndex(isAmbiguousToken)
+        : 0;
+      selectToken(tokens[first >= 0 ? first : 0]);
       return;
     }
+
     const idx = tokens.findIndex(t => t.id === selectedToken.id);
-    if (idx >= 0 && idx < tokens.length - 1) {
-      selectToken(tokens[idx + 1]);
+    if (idx < 0) return;
+
+    if (hasAmbiguous) {
+      const next = tokens.findIndex(
+        (token, index) => index > idx && isAmbiguousToken(token),
+      );
+      if (next >= 0) selectToken(tokens[next]);
+      return;
     }
-  }, [documentContent, selectedToken, selectToken]);
+
+    if (idx < tokens.length - 1) selectToken(tokens[idx + 1]);
+  }, [documentContent, selectedToken, selectToken, isAmbiguousToken]);
 
   const moveToPrevToken = useCallback(() => {
     const tokens = documentContent?.tokens;
     if (!tokens || tokens.length === 0) return;
+    const hasAmbiguous = tokens.some(isAmbiguousToken);
+
     if (!selectedToken) {
-      selectToken(tokens[tokens.length - 1]);
+      let last = tokens.length - 1;
+      if (hasAmbiguous) {
+        last = -1;
+        for (let i = tokens.length - 1; i >= 0; i--) {
+          if (isAmbiguousToken(tokens[i])) {
+            last = i;
+            break;
+          }
+        }
+      }
+      selectToken(tokens[last >= 0 ? last : tokens.length - 1]);
       return;
     }
+
     const idx = tokens.findIndex(t => t.id === selectedToken.id);
-    if (idx > 0) {
-      selectToken(tokens[idx - 1]);
+    if (idx < 0) return;
+
+    if (hasAmbiguous) {
+      let previous = -1;
+      for (let i = idx - 1; i >= 0; i--) {
+        if (isAmbiguousToken(tokens[i])) {
+          previous = i;
+          break;
+        }
+      }
+      if (previous >= 0) selectToken(tokens[previous]);
+      return;
     }
-  }, [documentContent, selectedToken, selectToken]);
+
+    if (idx > 0) selectToken(tokens[idx - 1]);
+  }, [documentContent, selectedToken, selectToken, isAmbiguousToken]);
 
   const getMyAnnotation = useCallback(
     (tokenId: string): WsdAnnotation | undefined => {
@@ -277,6 +361,57 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
       advanceToNextToken();
     },
     [selectedToken, workspaceId, advanceToNextToken],
+  );
+
+  const handleAddSense = useCallback(
+    async (event: FormEvent) => {
+      event.preventDefault();
+      if (!selectedToken) return;
+      const senseLabel = newSenseLabel.trim();
+      if (!senseLabel) return;
+
+      setSavingSense(true);
+      const result = await createSenseAndAnnotateAction(workspaceId, {
+        tokenId: selectedToken.id,
+        senseLabel,
+        description: newSenseDescription.trim() || null,
+      });
+      setSavingSense(false);
+      if (!result.ok) {
+        toast.error(result.error || 'Failed to add the sense.');
+        return;
+      }
+
+      const { sense, annotation } = result.data;
+      setSenses((prev) =>
+        prev.some((existing) => existing.id === sense.id) ? prev : [...prev, sense],
+      );
+      setAmbiguousWords((prev) => {
+        const next = new Set(prev);
+        next.add(sense.word.toLowerCase());
+        return next;
+      });
+      setAnnotationsByToken((prev) => {
+        const tokenId = annotation.tokenId;
+        const others = (prev[tokenId] ?? []).filter(
+          (existing) => existing.annotatorId !== annotation.annotatorId,
+        );
+        return { ...prev, [tokenId]: [...others, annotation] };
+      });
+      setInventoryRefreshKey((key) => key + 1);
+      setAddingSense(false);
+      setNewSenseLabel('');
+      setNewSenseDescription('');
+      toast.success(`Added sense “${sense.senseLabel}” and tagged the token.`);
+      advanceToNextToken();
+    },
+    [
+      selectedToken,
+      workspaceId,
+      newSenseLabel,
+      newSenseDescription,
+      advanceToNextToken,
+    ],
   );
 
   const clearSelectedTokenAnnotation = useCallback(async () => {
@@ -347,6 +482,9 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
       if (e.key === 'Escape') {
         setSelectedToken(null);
         setSenses([]);
+        setAddingSense(false);
+        setNewSenseLabel('');
+        setNewSenseDescription('');
         return;
       }
 
@@ -414,11 +552,19 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
   const stats = useMemo(() => {
     const tokens = documentContent?.tokens ?? [];
     let tagged = 0;
+    let ambiguous = 0;
     for (const token of tokens) {
-      if (getMyAnnotation(token.id)) tagged++;
+      if (!ambiguousWords.has(token.form.toLowerCase())) continue;
+      ambiguous += 1;
+      if (getMyAnnotation(token.id)) tagged += 1;
     }
-    return { total: tokens.length, tagged, untagged: tokens.length - tagged };
-  }, [documentContent, getMyAnnotation]);
+    return {
+      total: tokens.length,
+      ambiguous,
+      tagged,
+      untagged: ambiguous - tagged,
+    };
+  }, [documentContent, getMyAnnotation, ambiguousWords]);
 
   if (loading) {
     return <FullScreenLoader label="Loading WSD Editor..." />;
@@ -490,8 +636,20 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
 
           <div className="flex items-center gap-4">
             <Badge variant="secondary" className="text-sm">
-              {stats.tagged}/{stats.total} tagged{currentUser ? ' by you' : ''}
+              {stats.tagged}/{stats.ambiguous} ambiguous tagged{currentUser ? ' by you' : ''}
             </Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              title="Download every annotation as CSV"
+              onClick={() =>
+                window.location.assign(
+                  `/api/wsd/${workspaceId}/export/annotations?format=csv`,
+                )
+              }
+            >
+              Export CSV
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -540,7 +698,12 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
       <div className="flex h-[calc(100vh-73px)]">
         {/* Left Pane - Sense Inventory */}
         <aside className="w-80 border-r border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/60 backdrop-blur-sm">
-          <WsdSenseInventory workspaceId={workspaceId} onSensesChanged={reloadSensesForSelected} />
+          <WsdSenseInventory
+            workspaceId={workspaceId}
+            isAdmin={isAdmin}
+            onSensesChanged={reloadSensesForSelected}
+            refreshToken={inventoryRefreshKey}
+          />
         </aside>
 
         {/* Middle - Text Editor */}
@@ -558,6 +721,7 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
                   {documentContent?.tokens?.map(token => {
                     const mine = getMyAnnotation(token.id);
                     const isSelected = selectedToken?.id === token.id;
+                    const isAmbiguous = isAmbiguousToken(token);
                     const others = getOtherAnnotations(token.id).filter(a => a.senseId !== mine?.senseId);
                     const disagreementTitle = others.length > 0
                       ? others.map(a => `${a.annotatorId}: ${a.senseLabel ?? a.senseId}`).join('\n')
@@ -572,14 +736,26 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
                             ? 'ring-2 ring-[var(--primary)] ring-offset-1 bg-indigo-50 dark:bg-indigo-950/40 shadow-md'
                             : mine
                               ? 'bg-green-100 dark:bg-green-900/40 hover:shadow-md'
-                              : 'hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                              : isAmbiguous
+                                ? 'bg-violet-50/70 dark:bg-violet-950/25 hover:bg-violet-100 dark:hover:bg-violet-900/40'
+                                : 'hover:bg-slate-100 dark:hover:bg-slate-800/50'
                         }`}
-                        title={mine ? `sense: ${mine.senseLabel ?? mine.senseId}` : 'click to tag'}
+                        title={
+                          mine
+                            ? `sense: ${mine.senseLabel ?? mine.senseId}`
+                            : isAmbiguous
+                              ? 'ambiguous word — click to tag'
+                              : 'click to tag'
+                        }
                       >
                         <span className="text-lg leading-tight">{token.form}</span>
                         {mine ? (
                           <span className="text-[10px] font-bold mt-0.5 leading-none text-green-700 dark:text-green-400 max-w-[120px] truncate">
                             {mine.senseLabel ?? '✓'}
+                          </span>
+                        ) : isAmbiguous ? (
+                          <span className="text-[10px] text-violet-500 mt-0.5 leading-none">
+                            ●
                           </span>
                         ) : (
                           <span className="text-[10px] text-slate-300 dark:text-slate-600 mt-0.5 leading-none">
@@ -613,9 +789,10 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
           <EditorHelpPanel
             accent="indigo"
             steps={[
-              { badge: '1', body: <><strong>Click a word</strong> in the text to load its senses</> },
+              { badge: '1', body: <><strong>Violet words</strong> are in the ambiguous-word list; click one to tag it</> },
               { badge: '2', body: <><strong>Pick a sense</strong> (or press 1–9) to tag the word</> },
-              { badge: '3', body: <>Use <strong>arrow keys</strong> to move through tokens</> },
+              { badge: '3', body: <><strong>Arrow keys</strong> jump between ambiguous words; click any other word to tag it too</> },
+              { badge: '4', body: <>No sense fits? <strong>Add a new one</strong> for that word in the right pane</> },
             ]}
             shortcuts={[
               { keys: ['1', '–', '9'], label: 'Pick Nth sense' },
@@ -656,12 +833,26 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
               <p className="text-sm text-slate-500 px-2 py-4">Loading senses…</p>
             )}
 
-            {selectedToken && !sensesLoading && senses.length === 0 && (
+            {selectedToken && !sensesLoading && senses.length === 0 && !addingSense && (
               <div className="px-2 py-4 text-sm text-slate-500">
                 <p className="font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  No senses defined for this word.
+                  No senses defined for this word yet.
                 </p>
-                <p>Ask your admin to add senses in the Sense Inventory.</p>
+                <p>
+                  Add the first sense below — it is saved to the workspace inventory and
+                  immediately available to everyone.
+                </p>
+                <p className="mt-1 text-xs">
+                  The imported list may use base forms; if this is an inflected form,
+                  adding a sense here creates an entry for this exact form.
+                </p>
+                <Button
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => setAddingSense(true)}
+                >
+                  Add a sense for “{selectedToken.form}”
+                </Button>
               </div>
             )}
 
@@ -701,6 +892,57 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
             {selectedToken && !sensesLoading && senses.length > 0 && filteredSenses.length === 0 && (
               <p className="text-sm text-slate-500 px-2 py-4">No senses match the filter.</p>
             )}
+
+            {selectedToken && !sensesLoading && senses.length > 0 && !addingSense && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={() => setAddingSense(true)}
+              >
+                + Add another sense for “{selectedToken.form}”
+              </Button>
+            )}
+
+            {selectedToken && addingSense && (
+              <form
+                onSubmit={handleAddSense}
+                className="rounded-lg border border-slate-200 p-3 space-y-2 dark:border-slate-700"
+              >
+                <p className="text-xs font-medium text-slate-600 dark:text-slate-400">
+                  New sense for “{selectedToken.form}”
+                </p>
+                <Input
+                  placeholder="Sense label (Assamese)"
+                  value={newSenseLabel}
+                  onChange={(event) => setNewSenseLabel(event.target.value)}
+                  required
+                />
+                <Textarea
+                  placeholder="English description (optional)"
+                  value={newSenseDescription}
+                  onChange={(event) => setNewSenseDescription(event.target.value)}
+                  rows={2}
+                />
+                <div className="flex gap-2">
+                  <Button type="submit" size="sm" disabled={savingSense}>
+                    {savingSense ? 'Saving…' : 'Save sense & tag'}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setAddingSense(false);
+                      setNewSenseLabel('');
+                      setNewSenseDescription('');
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            )}
           </div>
 
           <Separator />
@@ -713,8 +955,14 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
                 <span className="font-bold">{editorData.totalDocuments}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-600 dark:text-slate-400">Total Tokens</span>
+                <span className="text-slate-600 dark:text-slate-400">Tokens (loaded)</span>
                 <span className="font-bold">{stats.total}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-600 dark:text-slate-400">
+                  Ambiguous occurrences (loaded)
+                </span>
+                <span className="font-bold text-violet-600">{stats.ambiguous}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-600 dark:text-slate-400">Tagged</span>
@@ -726,16 +974,16 @@ export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps
               </div>
             </div>
 
-            {stats.total > 0 && (
+            {stats.ambiguous > 0 && (
               <div className="mt-4">
                 <div className="flex justify-between text-xs text-slate-500 mb-1">
-                  <span>Progress</span>
-                  <span>{Math.round((stats.tagged / stats.total) * 100)}%</span>
+                  <span>Ambiguous progress</span>
+                  <span>{Math.round((stats.tagged / stats.ambiguous) * 100)}%</span>
                 </div>
                 <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-gradient-to-r from-[var(--primary)] to-purple-500 rounded-full transition-all duration-500"
-                    style={{ width: `${(stats.tagged / stats.total) * 100}%` }}
+                    style={{ width: `${(stats.tagged / stats.ambiguous) * 100}%` }}
                   />
                 </div>
               </div>

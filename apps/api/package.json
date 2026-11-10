@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/api.smoke.test.ts"
+    "test": "node --import tsx --test test/api.smoke.test.ts test/wsd-sense-import.test.ts test/text-encoding.test.ts"
   },
   "dependencies": {
     "@genesis/contracts": "workspace:*",
@@ -21,6 +21,7 @@
     "prisma": "^5.22.0",
     "@prisma/client": "^5.22.0",
     "ws": "^8.18.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "3.25.76"
   },
   "devDependencies": {

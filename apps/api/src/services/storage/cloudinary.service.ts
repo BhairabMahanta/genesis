@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { config } from "../../config.js";
+import { decodeTextBytes } from "../text-encoding.js";
 import type { StorageService, StoredObject } from "./storage.service.js";
 
 /**
@@ -84,7 +85,8 @@ export class CloudinaryStorageService implements StorageService {
     if (!res.ok) {
       throw new Error(`Failed to download stored file (status ${res.status})`);
     }
-    return res.text();
+    const buffer = await res.arrayBuffer();
+    return decodeTextBytes(new Uint8Array(buffer)).text;
   }
 
   destroy(publicId: string): Promise<void> {

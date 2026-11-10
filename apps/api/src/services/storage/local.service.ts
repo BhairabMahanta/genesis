@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { StorageService, StoredObject } from "./storage.service.js";
+import { decodeTextBytes } from "../text-encoding.js";
 
 /**
  * Local-disk storage provider. Files live under `STORAGE_LOCAL_BASE_PATH`
@@ -43,7 +44,8 @@ export class LocalStorageService implements StorageService {
       throw new Error(`Unsupported storage URL: ${url}`);
     }
     const publicId = url.slice(URL_SCHEME.length);
-    return fs.readFile(this.filePathFor(publicId), "utf8");
+    const bytes = await fs.readFile(this.filePathFor(publicId));
+    return decodeTextBytes(bytes).text;
   }
 
   async delete(publicId: string): Promise<void> {

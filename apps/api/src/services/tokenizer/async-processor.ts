@@ -206,8 +206,9 @@ export function processDocumentAsync(event: UploadedDocumentEvent): void {
 }
 
 export function storedFileContentType(fileName: string): string {
-  if (fileName.toLowerCase().endsWith(".txt")) return "text/plain";
-  if (fileName.toLowerCase().endsWith(".conll") || fileName.toLowerCase().endsWith(".conll2012")) {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith(".txt") || lower.endsWith(".text")) return "text/plain";
+  if (lower.endsWith(".conll") || lower.endsWith(".conll2012")) {
     return "text/plain";
   }
   return "application/octet-stream";

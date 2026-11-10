@@ -37,6 +37,7 @@ export async function updateDocumentStatusAction(
 export async function uploadDocumentAction(
   workspaceId: string,
   formData: FormData,
+  options?: { revalidate?: boolean },
 ): Promise<ActionResult<DocumentResponse>> {
   const file = formData.get('file');
   if (!(file instanceof File)) {
@@ -44,9 +45,16 @@ export async function uploadDocumentAction(
   }
   try {
     const data = await uploadDocument(workspaceId, file);
-    revalidatePath(`/workspace/${workspaceId}`);
+    if (options?.revalidate !== false) {
+      revalidatePath(`/workspace/${workspaceId}`);
+    }
     return { ok: true, data };
   } catch (err) {
     return toActionError(err, 'Failed to upload document');
   }
+}
+
+/** Revalidate the workspace route once after a batch of uploads. */
+export async function revalidateWorkspaceAction(workspaceId: string): Promise<void> {
+  revalidatePath(`/workspace/${workspaceId}`);
 }

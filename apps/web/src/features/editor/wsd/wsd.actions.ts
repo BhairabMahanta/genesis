@@ -2,16 +2,21 @@
 
 import { type ActionResult, toActionError } from '@/server/contracts/common';
 import type {
+  CreateSenseWithAnnotationRequest,
   CreateWsdSenseRequest,
   WsdAnnotation,
   WsdSense,
+  WsdSenseImportSummary,
+  WsdSenseWithAnnotation,
 } from './wsd.contracts';
 import {
   createSense,
+  createSenseAndAnnotate,
   deleteAnnotation,
   deleteSense,
   getAnnotationsForDocument,
   getAnnotationsForToken,
+  importSenses,
   listSenses,
   updateSense,
   upsertAnnotation,
@@ -60,6 +65,34 @@ export async function listSensesAction(
     return { ok: true, data };
   } catch (err) {
     return toActionError(err, 'Failed to load senses.');
+  }
+}
+
+export async function importSensesAction(
+  workspaceId: string,
+  formData: FormData,
+): Promise<ActionResult<WsdSenseImportSummary>> {
+  const file = formData.get('file');
+  if (!(file instanceof File)) {
+    return { ok: false, error: 'No word-list file provided' };
+  }
+  try {
+    const data = await importSenses(workspaceId, file);
+    return { ok: true, data };
+  } catch (err) {
+    return toActionError(err, 'Failed to import the ambiguous-word list.');
+  }
+}
+
+export async function createSenseAndAnnotateAction(
+  workspaceId: string,
+  request: CreateSenseWithAnnotationRequest,
+): Promise<ActionResult<WsdSenseWithAnnotation>> {
+  try {
+    const data = await createSenseAndAnnotate(workspaceId, request);
+    return { ok: true, data };
+  } catch (err) {
+    return toActionError(err, 'Failed to add the sense and tag the token.');
   }
 }
 

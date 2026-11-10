@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import * as XLSX from "xlsx";
 
 /**
  * Minimal integration smoke suite.
@@ -72,6 +73,7 @@ test("API smoke: auth, workspace, document, notifications, cascade delete", asyn
   let documentId = "";
   let firstTokenId = "";
   let secondTokenId = "";
+  let wsdWorkspaceId = "";
   const createdNerTagIds: string[] = [];
   const createdPosTagIds: string[] = [];
 
@@ -216,6 +218,198 @@ test("API smoke: auth, workspace, document, notifications, cascade delete", asyn
       firstTokenId = content.body.data.tokens[0]?.id ?? "";
       secondTokenId = content.body.data.tokens[1]?.id ?? "";
       assert.ok(firstTokenId && secondTokenId, "expected token ids for annotation tests");
+    });
+
+    await t.test("WSD imports Excel senses, grows inline, and exports", async () => {
+      const created = await call<{ id: string }>(
+        "/api/workspaces",
+        jsonBody({
+          name: `WSD Smoke ${runId}`,
+          description: "WSD import test",
+          annotationType: "WSD",
+        }),
+        ownerToken,
+      );
+      assert.equal(created.res.status, 201);
+      wsdWorkspaceId = created.body.data.id;
+
+      const table: unknown[][] = [
+        [
+          "Sl No",
+          "Assamese Ambiguous Words",
+          "Sense1",
+          "",
+          "Sense2",
+          "",
+          "Number of Total Senses",
+        ],
+        ["", "", "Assamese", "English", "Assamese", "English", ""],
+        [1, "অংক", "গণিত", "Mathematics", "চিন", "a mark", 2],
+      ];
+      const sheet = XLSX.utils.aoa_to_sheet(table);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, sheet, "Sheet1");
+      const bytes = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
+
+      const makeForm = () => {
+        const form = new FormData();
+        form.append(
+          "file",
+          new File([bytes], "ambiguous.xlsx", {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          }),
+        );
+        return form;
+      };
+
+      const imported = await call<{
+        created: number;
+        words: number;
+        skippedDuplicates: number;
+      }>(
+        `/api/workspaces/${wsdWorkspaceId}/wsd/senses/import`,
+        { method: "POST", body: makeForm() },
+        ownerToken,
+      );
+      assert.equal(imported.res.status, 200);
+      assert.equal(imported.body.data.created, 2);
+      assert.equal(imported.body.data.words, 1);
+
+      const reimported = await call<{ created: number; skippedDuplicates: number }>(
+        `/api/workspaces/${wsdWorkspaceId}/wsd/senses/import`,
+        { method: "POST", body: makeForm() },
+        ownerToken,
+      );
+      assert.equal(reimported.res.status, 200);
+      assert.equal(reimported.body.data.created, 0);
+      assert.equal(reimported.body.data.skippedDuplicates, 2);
+
+      const badForm = new FormData();
+      badForm.append(
+        "file",
+        new File(["not really an xls"], "ambiguous.xls", {
+          type: "application/vnd.ms-excel",
+        }),
+      );
+      const rejected = await call<unknown>(
+        `/api/workspaces/${wsdWorkspaceId}/documents`,
+        { method: "POST", body: badForm },
+        ownerToken,
+      );
+      assert.equal(rejected.res.status, 400);
+      assert.match(
+        String((rejected.body as { message?: string }).message ?? ""),
+        /plain-text documents/i,
+      );
+
+      const binaryForm = new FormData();
+      binaryForm.append(
+        "file",
+        new File([new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7])], "binary.txt", {
+          type: "text/plain",
+        }),
+      );
+      const binaryRejected = await call<unknown>(
+        `/api/workspaces/${wsdWorkspaceId}/documents`,
+        { method: "POST", body: binaryForm },
+        ownerToken,
+      );
+      assert.equal(binaryRejected.res.status, 400);
+      assert.match(
+        String((binaryRejected.body as { message?: string }).message ?? ""),
+        /could not be read as plain text/i,
+      );
+
+      // The inline path needs a token in the WSD workspace. Upload UTF-16LE
+      // with a BOM to prove the encoding normalisation path works end-to-end.
+      const utf16Body = new Uint8Array([
+        0xff,
+        0xfe,
+        ...Buffer.from("John loves Mary.", "utf16le"),
+      ]);
+      const docForm = new FormData();
+      docForm.append(
+        "file",
+        new File([utf16Body], "wsd-smoke.txt", { type: "text/plain" }),
+      );
+      const uploaded = await call<{ id: string }>(
+        `/api/workspaces/${wsdWorkspaceId}/documents`,
+        { method: "POST", body: docForm },
+        ownerToken,
+      );
+      assert.equal(uploaded.res.status, 201);
+      const wsdDocumentId = uploaded.body.data.id;
+
+      let wsdTokenId = "";
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const content = await call<{ tokens: Array<{ id: string; form: string }> }>(
+          `/api/editor/workspaces/${wsdWorkspaceId}/documents/${wsdDocumentId}/content?page=0&size=50`,
+          {},
+          ownerToken,
+        );
+        const john = content.body.data.tokens?.find((token) => token.form === "John");
+        if (john) {
+          wsdTokenId = john.id;
+          break;
+        }
+        await delay(50);
+      }
+      assert.ok(wsdTokenId, "WSD document did not tokenize in time");
+
+      const annotated = await call<{
+        sense: { word: string; senseLabel: string };
+        annotation: { tokenId: string; senseLabel: string };
+      }>(
+        `/api/workspaces/${wsdWorkspaceId}/wsd/annotations/with-sense`,
+        jsonBody({
+          tokenId: wsdTokenId,
+          senseLabel: "জন",
+          description: "a name",
+        }),
+        ownerToken,
+      );
+      assert.equal(annotated.res.status, 200);
+      assert.equal(annotated.body.data.sense.word, "John");
+      assert.equal(annotated.body.data.sense.senseLabel, "জন");
+      assert.equal(annotated.body.data.annotation.senseLabel, "জন");
+
+      // WSD progress must move from 0 once an ambiguous token is tagged.
+      const wsdDocs = await call<
+        Array<{ id: string; status: string; progress: number | null }>
+      >(
+        `/api/workspaces/${wsdWorkspaceId}/documents`,
+        {},
+        ownerToken,
+      );
+      const wsdDoc = wsdDocs.body.data.find((doc) => doc.id === wsdDocumentId);
+      assert.equal(wsdDoc?.status, "ANNOTATING");
+      assert.ok((wsdDoc?.progress ?? 0) > 0, "expected document progress > 0");
+
+      const wsdWorkspace = await call<{ progressPercentage: number }>(
+        `/api/workspaces/${wsdWorkspaceId}`,
+        {},
+        ownerToken,
+      );
+      assert.ok(
+        wsdWorkspace.body.data.progressPercentage > 0,
+        "expected workspace progress > 0",
+      );
+
+      const annotationExport = await app.request(
+        `/api/workspaces/${wsdWorkspaceId}/wsd/export/annotations?format=csv`,
+        { headers: { Authorization: `Bearer ${ownerToken}` } },
+      );
+      assert.equal(annotationExport.status, 200);
+      const annotationCsv = await annotationExport.text();
+      assert.match(annotationCsv, /John/);
+      assert.match(annotationCsv, /জন/);
+
+      const senseExport = await app.request(
+        `/api/workspaces/${wsdWorkspaceId}/wsd/export/senses?format=xlsx`,
+        { headers: { Authorization: `Bearer ${ownerToken}` } },
+      );
+      assert.equal(senseExport.status, 200);
+      assert.ok((await senseExport.arrayBuffer()).byteLength > 1000);
     });
 
     await t.test("NER annotations reject undefined labels and invalid spans", async () => {
@@ -515,6 +709,9 @@ test("API smoke: auth, workspace, document, notifications, cascade delete", asyn
   } finally {
     if (workspaceId && ownerToken) {
       await call(`/api/workspaces/${workspaceId}`, { method: "DELETE" }, ownerToken).catch(() => undefined);
+    }
+    if (wsdWorkspaceId && ownerToken) {
+      await call(`/api/workspaces/${wsdWorkspaceId}`, { method: "DELETE" }, ownerToken).catch(() => undefined);
     }
     if (createdNerTagIds.length > 0) {
       await prisma.ner_tag_definitions

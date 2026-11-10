@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { BadRequestException } from "../common/errors.js";
 import { success } from "../common/response.js";
-import { config } from "../config.js";
+import { readMultipartFile } from "../common/multipart.js";
 import { needParam } from "../common/params.js";
 import { authMiddleware } from "../middleware/auth.js";
 import {
@@ -25,33 +25,12 @@ import {
 
 export const documentRoutes = new Hono();
 
-async function readUploadFile(body: Record<string, unknown>): Promise<{
-  bytes: Uint8Array;
-  filename: string;
-  contentType: string | null;
-}> {
-  const file = body["file"];
-  const single = Array.isArray(file) ? file[0] : file;
-  if (!(single instanceof File)) {
-    throw new BadRequestException("Missing file field in multipart upload");
-  }
-  if (single.size > config.maxUploadBytes) {
-    throw new BadRequestException("File exceeds the 50MB upload limit");
-  }
-  const buffer = new Uint8Array(await single.arrayBuffer());
-  return {
-    bytes: buffer,
-    filename: single.name || "upload",
-    contentType: single.type || null,
-  };
-}
-
 documentRoutes.post(
   "/workspaces/:workspaceId/documents",
   authMiddleware,
   async (c) => {
     const parsed = (await c.req.parseBody()) as Record<string, unknown>;
-    const file = await readUploadFile(parsed);
+    const file = await readMultipartFile(parsed);
     const doc = await uploadDocument(needParam(c, "workspaceId"), c.get("userId"), file);
     return c.json(success(doc, "Document uploaded successfully"), 201);
   },

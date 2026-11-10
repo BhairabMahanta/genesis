@@ -1,5 +1,7 @@
+import path from "node:path";
 import { BadRequestException, NotFoundException } from "../common/errors.js";
 import {
+  countWsdDocumentProgress,
   deleteDocumentEntity,
   deleteStoredFile,
   findDocumentById,
@@ -15,6 +17,7 @@ import {
 import type { DocumentEntity, DocumentStatus } from "../store/types.js";
 import { requireAdmin, requireMember } from "./workspace.service.js";
 import { getStorage } from "./storage/index.js";
+import { decodeTextBytes } from "./text-encoding.js";
 import { processDocumentAsync, storedFileContentType } from "./tokenizer/async-processor.js";
 import { displayName, notifyUser } from "./notification.service.js";
 import type { DocumentResponse } from "../schemas/document.schemas.js";
@@ -27,6 +30,23 @@ import type { DocumentResponse } from "../schemas/document.schemas.js";
  */
 
 const DOCUMENT_STATUSES: DocumentStatus[] = ["UPLOADED", "IMPORTED", "ANNOTATING", "COMPLETE"];
+
+/**
+ * Documents are plain text corpora only. Spreadsheets are handled by the WSD
+ * sense-inventory importer. Encoding detection happens after this check so
+ * UTF-16 files (which legitimately contain NUL bytes) are not rejected.
+ */
+const TEXT_DOCUMENT_EXTENSIONS = new Set([".txt", ".text", ".conll", ".conll2012"]);
+
+function assertTextDocument(file: { filename: string }): void {
+  const extension = path.extname(file.filename).toLowerCase();
+  if (!TEXT_DOCUMENT_EXTENSIONS.has(extension)) {
+    throw new BadRequestException(
+      "Only plain-text documents (.txt, .text, .conll, .conll2012) can be uploaded as documents. " +
+        "Import .xls/.xlsx/.csv ambiguous-word lists from the WSD Sense Inventory instead.",
+    );
+  }
+}
 
 async function toDocumentResponse(doc: DocumentEntity): Promise<DocumentResponse> {
   const stored = doc.storedFileId ? await findStoredFileById(doc.storedFileId) : undefined;
@@ -54,11 +74,21 @@ export async function uploadDocument(
   file: { bytes: Uint8Array; filename: string; contentType: string | null },
 ): Promise<DocumentResponse> {
   await requireMember(workspaceId, userId);
+  assertTextDocument(file);
+
+  const decoded = decodeTextBytes(file.bytes);
+  if (decoded.suspiciousBinary) {
+    throw new BadRequestException(
+      "This file could not be read as plain text. Save the corpus as UTF-8 or UTF-16 and try again.",
+    );
+  }
+  // Store normalized UTF-8 so tokenization never depends on the upload encoding.
+  const normalizedBytes = new TextEncoder().encode(decoded.text);
 
   const storage = getStorage();
   const folder = `workspaces/${workspaceId}/documents`;
   const stored = await storage.upload(
-    file.bytes,
+    normalizedBytes,
     file.filename,
     file.contentType ?? storedFileContentType(file.filename),
     folder,
@@ -250,5 +280,37 @@ export async function onMentionAnnotated(documentId: string): Promise<void> {
     await updateDocumentEntity(documentId, { progress });
   } catch (err) {
     console.warn(`Failed to update document progress for ${documentId}:`, err);
+  }
+}
+
+/**
+ * Recompute WSD progress after an annotation is created or removed.
+ *
+ * Progress is based on occurrences of words in the workspace sense inventory,
+ * not every token: a 9k-token corpus with 12 ambiguous occurrences should not
+ * show 0.1% after all 12 are tagged. Tokens with no lexicon match are still
+ * annotatable (the editor can add a sense inline), and doing so adds the word
+ * to the inventory before this recalculation runs.
+ */
+export async function onWsdAnnotationChanged(documentId: string): Promise<void> {
+  try {
+    const doc = await findDocumentById(documentId);
+    if (!doc) return;
+
+    const stats = await countWsdDocumentProgress(documentId);
+    const progress =
+      stats.ambiguousTotal > 0
+        ? Math.min(1, stats.annotated / stats.ambiguousTotal)
+        : 0;
+
+    await updateDocumentEntity(documentId, {
+      progress,
+      ...(stats.annotated > 0 &&
+      (doc.status === "UPLOADED" || doc.status === "IMPORTED")
+        ? { status: "ANNOTATING" as const }
+        : {}),
+    });
+  } catch (err) {
+    console.warn(`Failed to update WSD progress for ${documentId}:`, err);
   }
 }

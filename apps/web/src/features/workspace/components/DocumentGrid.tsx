@@ -26,6 +26,7 @@ interface DocumentGridProps {
   searchQuery: string;
   onChangeSearch: (q: string) => void;
   isUploading: boolean;
+  uploadProgress?: { done: number; total: number; failed: number } | null;
   onUploadClick: () => void;
   onAnnotate: () => void;
   onExportDocument: (documentId: string) => void;
@@ -66,6 +67,7 @@ export function DocumentGrid({
   searchQuery,
   onChangeSearch,
   isUploading,
+  uploadProgress,
   onUploadClick,
   onAnnotate,
   onExportDocument,
@@ -80,10 +82,19 @@ export function DocumentGrid({
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Documents</h2>
-        <Button className="gap-2" onClick={onUploadClick}>
+        <div>
+          <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Documents</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+            Select one or many `.txt` / CoNLL files at once.
+          </p>
+        </div>
+        <Button className="gap-2" onClick={onUploadClick} disabled={isUploading}>
           <Upload className="w-5 h-5" />
-          {isUploading ? 'Uploading...' : 'Upload Documents'}
+          {isUploading
+            ? uploadProgress
+              ? `Uploading ${uploadProgress.done}/${uploadProgress.total}...`
+              : 'Uploading...'
+            : 'Upload Documents'}
         </Button>
       </div>
 

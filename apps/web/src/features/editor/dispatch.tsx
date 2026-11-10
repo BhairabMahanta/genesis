@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import type { AnnotationType } from '@/features/workspace/workspace.contracts';
 import { SessionExpiredError } from '@/server/errors';
-import { getWorkspaceById } from '@/features/workspace/workspace.gateway';
+import { getWorkspaceById, listMembers } from '@/features/workspace/workspace.gateway';
+import { getSessionAction } from '@/features/auth/auth.actions';
 import { isOneOf } from '@/lib/utils';
 import CorefEditor from '@/features/editor/coref/components/CorefEditor';
 import NerEditor from '@/features/editor/ner/components/NerEditor';
@@ -44,7 +45,24 @@ export default async function EditorDispatch({
       return <NerEditor workspaceId={id} workspaceName={workspaceName} />;
     case 'POS':
       return <PosEditor workspaceId={id} workspaceName={workspaceName} />;
-    case 'WSD':
-      return <WsdEditor workspaceId={id} workspaceName={workspaceName} />;
+    case 'WSD': {
+      const [members, session] = await Promise.all([
+        listMembers(id),
+        getSessionAction(),
+      ]);
+      const currentUserId = session.ok ? session.data?.id : undefined;
+      const isAdmin =
+        !!currentUserId &&
+        members.some(
+          (member) => member.userId === currentUserId && member.role === 'ADMIN',
+        );
+      return (
+        <WsdEditor
+          workspaceId={id}
+          workspaceName={workspaceName}
+          isAdmin={isAdmin}
+        />
+      );
+    }
   }
 }

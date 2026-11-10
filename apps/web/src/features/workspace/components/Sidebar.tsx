@@ -1,10 +1,24 @@
 'use client';
 
-import { ArrowLeft, FileText, Home, Settings as SettingsIcon, Tag, Users } from 'lucide-react';
+import {
+  ArrowLeft,
+  BookOpen,
+  FileText,
+  Home,
+  Settings as SettingsIcon,
+  Tag,
+  Users,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { WorkspaceResponse } from '@/features/workspace/workspace.contracts';
 
-export type SidebarItem = 'getting-started' | 'documents' | 'collaborators' | 'schema' | 'settings';
+export type SidebarItem =
+  | 'getting-started'
+  | 'documents'
+  | 'lexicon'
+  | 'collaborators'
+  | 'schema'
+  | 'settings';
 
 interface SidebarProps {
   workspace: WorkspaceResponse;
@@ -28,6 +42,16 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 export function Sidebar({ workspace, activeSection, isAdmin, onChangeSection, onBack }: SidebarProps) {
+  const navItems: NavItem[] =
+    workspace.annotationType === 'WSD'
+      ? [
+          NAV_ITEMS[0],
+          NAV_ITEMS[1],
+          { id: 'lexicon', label: 'Sense Inventory', Icon: BookOpen },
+          ...NAV_ITEMS.slice(2),
+        ]
+      : NAV_ITEMS;
+
   return (
     <aside className="w-64 border-r border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/60 backdrop-blur-sm min-h-[calc(100vh-73px)] sticky top-[73px]">
       <div className="p-4">
@@ -41,7 +65,7 @@ export function Sidebar({ workspace, activeSection, isAdmin, onChangeSection, on
         </Button>
 
         <nav className="space-y-1">
-          {NAV_ITEMS.map(({ id, label, Icon }) => (
+          {navItems.map(({ id, label, Icon }) => (
             <SidebarButton
               key={id}
               active={activeSection === id}

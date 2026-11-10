@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 export const createSenseSchema = z.object({
-  word: z.string().min(1).max(255),
-  senseLabel: z.string().min(1).max(255),
-  description: z.string().max(2000).nullish(),
+  word: z.string().trim().min(1).max(200),
+  senseLabel: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(2000).nullish(),
 });
 
 export type CreateSenseInput = z.infer<typeof createSenseSchema>;
@@ -15,6 +15,20 @@ export const createWsdAnnotationSchema = z.object({
 });
 
 export type CreateWsdAnnotationInput = z.infer<typeof createWsdAnnotationSchema>;
+
+/**
+ * Inline sense creation from the editor. The word is derived from the token
+ * server-side, so the client only supplies the sense text.
+ */
+export const createSenseWithAnnotationSchema = z.object({
+  tokenId: z.string().uuid(),
+  senseLabel: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(2000).nullish(),
+});
+
+export type CreateSenseWithAnnotationInput = z.infer<
+  typeof createSenseWithAnnotationSchema
+>;
 
 export interface WsdSenseDto {
   id: string;

@@ -3,9 +3,12 @@ import 'server-only';
 import { ApiResponse } from '@/server/contracts/common';
 import { serverFetch } from '@/server/http';
 import {
+  CreateSenseWithAnnotationRequest,
   CreateWsdSenseRequest,
   WsdAnnotation,
   WsdSense,
+  WsdSenseImportSummary,
+  WsdSenseWithAnnotation,
 } from './wsd.contracts';
 
 export async function listSenses(
@@ -92,4 +95,28 @@ export async function deleteSense(
     `/api/workspaces/${workspaceId}/wsd/senses/${senseId}`,
     { method: 'DELETE' },
   );
+}
+
+export async function importSenses(
+  workspaceId: string,
+  file: File,
+): Promise<WsdSenseImportSummary> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await serverFetch<ApiResponse<WsdSenseImportSummary>>(
+    `/api/workspaces/${workspaceId}/wsd/senses/import`,
+    { method: 'POST', body: formData },
+  );
+  return res.data;
+}
+
+export async function createSenseAndAnnotate(
+  workspaceId: string,
+  request: CreateSenseWithAnnotationRequest,
+): Promise<WsdSenseWithAnnotation> {
+  const res = await serverFetch<ApiResponse<WsdSenseWithAnnotation>>(
+    `/api/workspaces/${workspaceId}/wsd/annotations/with-sense`,
+    { method: 'POST', body: JSON.stringify(request) },
+  );
+  return res.data;
 }

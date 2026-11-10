@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { Download, LogOut, Play, Settings, Tag, Upload, User } from 'lucide-react';
+import { BookOpen, Download, LogOut, Play, Settings, Tag, Upload, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -37,12 +37,14 @@ import {
 } from '@/features/workspace/workspace.actions';
 import {
   deleteDocumentAction,
+  revalidateWorkspaceAction,
   uploadDocumentAction,
 } from '@/features/document/document.actions';
 import { NotificationDropdown } from '@/features/notifications/components/NotificationDropdown';
 import { Sidebar, SidebarItem } from './Sidebar';
 import { DocumentGrid, DocumentFilter } from './DocumentGrid';
 import { MemberManagement } from './MemberManagement';
+import { WsdLexicon } from './WsdLexicon';
 import { ExportDialog } from './ExportDialog';
 import { toast } from 'sonner';
 
@@ -88,6 +90,14 @@ export function WorkspaceShell({
   const [updatedDescription, setUpdatedDescription] = useState(initialWorkspace.description || '');
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{
+    done: number;
+    total: number;
+    failed: number;
+  } | null>(null);
+  const [uploadFailures, setUploadFailures] = useState<
+    Array<{ name: string; error: string }>
+  >([]);
 
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState<ExportFormat>(ExportFormat.SEPARATE_FILES_ZIP);
@@ -194,31 +204,103 @@ export function WorkspaceShell({
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setIsUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
-    const result = await uploadDocumentAction(workspace.id, formData);
-    setIsUploading(false);
+    const files = Array.from(event.target.files ?? []);
+    // Clear immediately so selecting the same file(s) again still fires change.
     if (fileInputRef.current) fileInputRef.current.value = '';
-    if (!result.ok) {
-      console.error('Failed to upload document:', result.error);
-      toast.error('Failed to upload document.');
-      return;
+    if (files.length === 0) return;
+
+    setIsUploading(true);
+    setUploadFailures([]);
+    setUploadProgress({ done: 0, total: files.length, failed: 0 });
+
+    const allowedExtensions = ['.txt', '.text', '.conll', '.conll2012'];
+    const existingNames = new Set(documents.map((doc) => doc.name.toLowerCase()));
+    const batchNames = new Set<string>();
+    const failures: Array<{ name: string; error: string }> = [];
+    let succeeded = 0;
+
+    try {
+      for (let index = 0; index < files.length; index++) {
+        const file = files[index];
+        const extension = `.${file.name.split('.').pop()?.toLowerCase() ?? ''}`;
+        const normalizedName = file.name.toLowerCase();
+        if (!allowedExtensions.includes(extension)) {
+          failures.push({
+            name: file.name,
+            error: 'Only .txt, .text, .conll and .conll2012 documents are supported.',
+          });
+        } else if (existingNames.has(normalizedName)) {
+          failures.push({
+            name: file.name,
+            error: 'A document with this name already exists in this workspace.',
+          });
+        } else if (batchNames.has(normalizedName)) {
+          failures.push({
+            name: file.name,
+            error: 'Duplicate file name in this upload batch.',
+          });
+        } else {
+          batchNames.add(normalizedName);
+          const formData = new FormData();
+          formData.append('file', file);
+          const result = await uploadDocumentAction(workspace.id, formData, {
+            revalidate: false,
+          });
+          if (!result.ok) {
+            console.error(`Failed to upload ${file.name}:`, result.error);
+            failures.push({
+              name: file.name,
+              error: result.error || 'Upload failed.',
+            });
+          } else if (result.data) {
+            const uploaded = result.data;
+            existingNames.add(normalizedName);
+            succeeded += 1;
+            setDocuments(prev =>
+              prev.some(doc => doc.id === uploaded.id) ? prev : [uploaded, ...prev],
+            );
+            setWorkspace(prev => ({
+              ...prev,
+              documentCount: prev.documentCount + 1,
+              updatedAt: new Date().toISOString(),
+            }));
+          }
+        }
+
+        setUploadProgress({
+          done: index + 1,
+          total: files.length,
+          failed: failures.length,
+        });
+        setUploadFailures([...failures]);
+      }
+    } catch (error) {
+      failures.push({
+        name: 'Upload batch',
+        error: error instanceof Error ? error.message : 'Unexpected upload error.',
+      });
     }
-    if (result.data) {
-      const uploaded = result.data;
-      setDocuments(prev =>
-        prev.some(doc => doc.id === uploaded.id) ? prev : [uploaded, ...prev],
+
+    setIsUploading(false);
+    setUploadProgress(null);
+    setUploadFailures([...failures]);
+
+    if (failures.length > 0) {
+      toast.error(
+        `Uploaded ${succeeded} of ${files.length} document${files.length === 1 ? '' : 's'}. ${failures.length} failed.`,
       );
-      setWorkspace(prev => ({
-        ...prev,
-        documentCount: prev.documentCount + 1,
-        updatedAt: new Date().toISOString(),
-      }));
+    } else {
+      toast.success(
+        `Uploaded ${succeeded} document${succeeded === 1 ? '' : 's'} successfully.`,
+      );
     }
-    // Re-render the RSC so workspace counts refresh.
+
+    // Revalidate and re-render the RSC once after the whole batch.
+    try {
+      await revalidateWorkspaceAction(workspace.id);
+    } catch {
+      // The local state is already updated; router.refresh still fetches fresh data.
+    }
     router.refresh();
   };
 
@@ -351,8 +433,68 @@ export function WorkspaceShell({
               type="file"
               ref={fileInputRef}
               className="hidden"
+              accept=".txt,.text,.conll,.conll2012"
+              multiple
               onChange={handleFileUpload}
             />
+
+            {(uploadProgress || uploadFailures.length > 0) && (
+              <div className="mb-6 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                {uploadProgress && (
+                  <div>
+                    <p className="font-medium text-slate-800 dark:text-slate-200">
+                      Uploading {uploadProgress.done} of {uploadProgress.total}
+                      {uploadProgress.failed > 0
+                        ? ` · ${uploadProgress.failed} failed`
+                        : ''}
+                    </p>
+                    <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                      <div
+                        className="h-full rounded-full bg-[var(--primary)] transition-all duration-300"
+                        style={{
+                          width: `${Math.round(
+                            (uploadProgress.done / Math.max(1, uploadProgress.total)) * 100,
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {uploadFailures.length > 0 && (
+                  <div className={uploadProgress ? 'mt-3' : ''}>
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-medium text-red-700 dark:text-red-300">
+                        {uploadFailures.length} file
+                        {uploadFailures.length === 1 ? '' : 's'} could not be uploaded
+                      </p>
+                      {!uploadProgress && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => setUploadFailures([])}
+                        >
+                          Dismiss
+                        </Button>
+                      )}
+                    </div>
+                    <ul className="mt-1 list-inside list-disc space-y-0.5 text-xs text-red-600 dark:text-red-300">
+                      {uploadFailures.slice(0, 10).map((failure) => (
+                        <li key={`${failure.name}-${failure.error}`}>
+                          <span className="font-medium">{failure.name}</span>: {failure.error}
+                        </li>
+                      ))}
+                    </ul>
+                    {uploadFailures.length > 10 && (
+                      <p className="mt-1 text-xs text-red-600 dark:text-red-300">
+                        …and {uploadFailures.length - 10} more.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {activeSection === 'getting-started' && (
               <div>
@@ -392,14 +534,46 @@ export function WorkspaceShell({
                         <Upload className="w-5 h-5" />
                       </div>
                       <CardTitle>Import Documents</CardTitle>
-                      <CardDescription>Upload new documents to this workspace</CardDescription>
+                      <CardDescription>
+                        Select one or many plain-text or CoNLL documents to annotate
+                      </CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <Button variant="outline" className="w-full" onClick={() => fileInputRef.current?.click()}>
-                        Import
+                      <Button
+                        variant="outline"
+                        className="w-full"
+                        disabled={isUploading}
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        {isUploading && uploadProgress
+                          ? `Uploading ${uploadProgress.done}/${uploadProgress.total}...`
+                          : 'Import'}
                       </Button>
                     </CardContent>
                   </Card>
+
+                  {workspace.annotationType === 'WSD' && (
+                    <Card className="hover:shadow-lg transition-shadow cursor-pointer group">
+                      <CardHeader>
+                        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white mb-4 group-hover:scale-110 transition-transform">
+                          <BookOpen className="w-5 h-5" />
+                        </div>
+                        <CardTitle>Ambiguous Words</CardTitle>
+                        <CardDescription>
+                          Import the Excel word list and review every word and sense
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <Button
+                          variant="outline"
+                          className="w-full"
+                          onClick={() => setActiveSection('lexicon')}
+                        >
+                          Manage Sense Inventory
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  )}
 
                   <Card className="hover:shadow-lg transition-shadow">
                     <CardHeader>
@@ -438,11 +612,16 @@ export function WorkspaceShell({
                 searchQuery={searchQuery}
                 onChangeSearch={setSearchQuery}
                 isUploading={isUploading}
+                uploadProgress={uploadProgress}
                 onUploadClick={() => fileInputRef.current?.click()}
                 onAnnotate={() => router.push(`/workspace/${workspaceId}/editor`)}
                 onExportDocument={openExportDialog}
                 onDeleteDocument={handleDeleteDocument}
               />
+            )}
+
+            {activeSection === 'lexicon' && workspace.annotationType === 'WSD' && (
+              <WsdLexicon workspaceId={workspaceId} isAdmin={isAdmin} />
             )}
 
             {activeSection === 'collaborators' && (

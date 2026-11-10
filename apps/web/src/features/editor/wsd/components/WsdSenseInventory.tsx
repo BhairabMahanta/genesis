@@ -14,9 +14,13 @@ import {
 
 interface WsdSenseInventoryProps {
   workspaceId: string;
+  /** Only admins can add/edit/delete from the inventory pane. */
+  isAdmin: boolean;
   /** Called after any successful create/update/delete so callers can refresh
    *  derived views (e.g. the right-pane sense picker for the selected token). */
   onSensesChanged?: () => void;
+  /** Bump this after an inline add from the right pane so the left list reloads. */
+  refreshToken?: number;
 }
 
 /**
@@ -25,7 +29,12 @@ interface WsdSenseInventoryProps {
  * surface for sense management. Sense mutations are admin-only on the backend;
  * non-admins see the rejection inline.
  */
-export function WsdSenseInventory({ workspaceId, onSensesChanged }: WsdSenseInventoryProps) {
+export function WsdSenseInventory({
+  workspaceId,
+  isAdmin,
+  onSensesChanged,
+  refreshToken = 0,
+}: WsdSenseInventoryProps) {
   const [senses, setSenses] = useState<WsdSense[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +63,7 @@ export function WsdSenseInventory({ workspaceId, onSensesChanged }: WsdSenseInve
     return () => {
       cancelled = true;
     };
-  }, [workspaceId]);
+  }, [workspaceId, refreshToken]);
 
   const notifyChanged = useCallback(() => {
     onSensesChanged?.();
@@ -132,19 +141,23 @@ export function WsdSenseInventory({ workspaceId, onSensesChanged }: WsdSenseInve
       <div className="p-4 border-b border-slate-200 dark:border-slate-800 sticky top-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm z-10">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-lg font-bold text-slate-900 dark:text-white">Sense Inventory</h2>
-          <Button
-            size="sm"
-            variant={adding ? 'secondary' : 'outline'}
-            onClick={() => {
-              setAdding(v => !v);
-              setError(null);
-            }}
-          >
-            {adding ? 'Close' : '+ Add'}
-          </Button>
+          {isAdmin && (
+            <Button
+              size="sm"
+              variant={adding ? 'secondary' : 'outline'}
+              onClick={() => {
+                setAdding(v => !v);
+                setError(null);
+              }}
+            >
+              {adding ? 'Close' : '+ Add'}
+            </Button>
+          )}
         </div>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Manage the senses annotators can pick (admin only).
+          {isAdmin
+            ? 'Admins manage the inventory here. Annotators can add a sense from the tagging pane.'
+            : 'Read-only here. Add a sense while tagging from the right pane.'}
         </p>
       </div>
 
@@ -155,7 +168,7 @@ export function WsdSenseInventory({ workspaceId, onSensesChanged }: WsdSenseInve
           </div>
         )}
 
-        {adding && (
+        {isAdmin && adding && (
           <form
             onSubmit={handleCreate}
             className="space-y-2 rounded-lg border border-slate-200 dark:border-slate-700 p-3"
@@ -232,24 +245,26 @@ export function WsdSenseInventory({ workspaceId, onSensesChanged }: WsdSenseInve
                             </div>
                           )}
                         </div>
-                        <div className="flex gap-1 flex-shrink-0">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 px-2 text-xs"
-                            onClick={() => startEdit(sense)}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 px-2 text-xs text-red-600 hover:text-red-700"
-                            onClick={() => handleDelete(sense.id)}
-                          >
-                            Delete
-                          </Button>
-                        </div>
+                        {isAdmin && (
+                          <div className="flex gap-1 flex-shrink-0">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => startEdit(sense)}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-xs text-red-600 hover:text-red-700"
+                              onClick={() => handleDelete(sense.id)}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
