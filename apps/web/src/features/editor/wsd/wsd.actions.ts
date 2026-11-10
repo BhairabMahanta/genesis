@@ -2,22 +2,28 @@
 
 import { type ActionResult, toActionError } from '@/server/contracts/common';
 import type {
-  CreateSenseWithAnnotationRequest,
+  AmbiguousWordMatch,
   CreateWsdSenseRequest,
+  ImportSensesResult,
+  PaginatedSenses,
+  SenseSearchParams,
   WsdAnnotation,
+  WsdRejection,
   WsdSense,
-  WsdSenseImportSummary,
-  WsdSenseWithAnnotation,
 } from './wsd.contracts';
 import {
   createSense,
-  createSenseAndAnnotate,
   deleteAnnotation,
   deleteSense,
   getAnnotationsForDocument,
   getAnnotationsForToken,
   importSenses,
+  listRejectionsForDocument,
   listSenses,
+  matchAmbiguousWords,
+  rejectSense,
+  unrejectSense,
+  searchSenses,
   updateSense,
   upsertAnnotation,
 } from './wsd.gateway';
@@ -27,9 +33,10 @@ export async function createSenseAction(
   request: CreateWsdSenseRequest,
 ): Promise<ActionResult<WsdSense>> {
   try {
-    const sense = await createSense(workspaceId, request);    return { ok: true, data: sense };
+    const sense = await createSense(workspaceId, request);
+    return { ok: true, data: sense };
   } catch (err) {
-    return toActionError(err, 'Failed to create sense. Admin role is required.');
+    return toActionError(err, 'Failed to create sense.');
   }
 }
 
@@ -39,7 +46,8 @@ export async function updateSenseAction(
   request: CreateWsdSenseRequest,
 ): Promise<ActionResult<WsdSense>> {
   try {
-    const sense = await updateSense(workspaceId, senseId, request);    return { ok: true, data: sense };
+    const sense = await updateSense(workspaceId, senseId, request);
+    return { ok: true, data: sense };
   } catch (err) {
     return toActionError(err, 'Failed to update sense.');
   }
@@ -50,7 +58,8 @@ export async function deleteSenseAction(
   senseId: string,
 ): Promise<ActionResult<void>> {
   try {
-    await deleteSense(workspaceId, senseId);    return { ok: true, data: undefined };
+    await deleteSense(workspaceId, senseId);
+    return { ok: true, data: undefined };
   } catch (err) {
     return toActionError(err, 'Failed to delete sense.');
   }
@@ -68,31 +77,27 @@ export async function listSensesAction(
   }
 }
 
-export async function importSensesAction(
+export async function searchSensesAction(
   workspaceId: string,
-  formData: FormData,
-): Promise<ActionResult<WsdSenseImportSummary>> {
-  const file = formData.get('file');
-  if (!(file instanceof File)) {
-    return { ok: false, error: 'No word-list file provided' };
-  }
+  params: SenseSearchParams,
+): Promise<ActionResult<PaginatedSenses>> {
   try {
-    const data = await importSenses(workspaceId, file);
+    const data = await searchSenses(workspaceId, params);
     return { ok: true, data };
   } catch (err) {
-    return toActionError(err, 'Failed to import the ambiguous-word list.');
+    return toActionError(err, 'Failed to search senses.');
   }
 }
 
-export async function createSenseAndAnnotateAction(
+export async function importSensesAction(
   workspaceId: string,
-  request: CreateSenseWithAnnotationRequest,
-): Promise<ActionResult<WsdSenseWithAnnotation>> {
+  formData: FormData,
+): Promise<ActionResult<ImportSensesResult>> {
   try {
-    const data = await createSenseAndAnnotate(workspaceId, request);
+    const data = await importSenses(workspaceId, formData);
     return { ok: true, data };
   } catch (err) {
-    return toActionError(err, 'Failed to add the sense and tag the token.');
+    return toActionError(err, 'Failed to import senses. Workspace admin role is required.');
   }
 }
 
@@ -142,5 +147,55 @@ export async function deleteAnnotationAction(
     return { ok: true, data: undefined };
   } catch (err) {
     return toActionError(err, 'Failed to remove annotation.');
+  }
+}
+
+export async function matchAmbiguousWordsAction(
+  workspaceId: string,
+  forms: string[],
+): Promise<ActionResult<AmbiguousWordMatch[]>> {
+  try {
+    const data = await matchAmbiguousWords(workspaceId, forms);
+    return { ok: true, data };
+  } catch (err) {
+    return toActionError(err, 'Failed to match ambiguous words.');
+  }
+}
+
+export async function listRejectionsForDocumentAction(
+  workspaceId: string,
+  documentId: string,
+): Promise<ActionResult<WsdRejection[]>> {
+  try {
+    const data = await listRejectionsForDocument(workspaceId, documentId);
+    return { ok: true, data };
+  } catch (err) {
+    return toActionError(err, 'Failed to load your rejected senses.');
+  }
+}
+
+export async function rejectSenseAction(
+  workspaceId: string,
+  tokenId: string,
+  senseId: string,
+): Promise<ActionResult<void>> {
+  try {
+    await rejectSense(workspaceId, tokenId, senseId);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return toActionError(err, 'Failed to reject sense.');
+  }
+}
+
+export async function unrejectSenseAction(
+  workspaceId: string,
+  tokenId: string,
+  senseId: string,
+): Promise<ActionResult<void>> {
+  try {
+    await unrejectSense(workspaceId, tokenId, senseId);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return toActionError(err, 'Failed to undo rejection.');
   }
 }

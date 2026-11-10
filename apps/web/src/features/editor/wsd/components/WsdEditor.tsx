@@ -1,15 +1,16 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, type FormEvent } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Check, X } from 'lucide-react';
 import { useAuth } from '@/features/auth/auth.provider';
 import type {
   WorkspaceEditorResponse,
@@ -24,10 +25,14 @@ import {
   saveEditorSessionAction,
 } from '@/features/editor/core/editor.actions';
 import {
-  createSenseAndAnnotateAction,
+  createSenseAction,
   deleteAnnotationAction,
   listAnnotationsForDocumentAction,
+  listRejectionsForDocumentAction,
   listSensesAction,
+  matchAmbiguousWordsAction,
+  rejectSenseAction,
+  unrejectSenseAction,
   upsertAnnotationAction,
 } from '@/features/editor/wsd/wsd.actions';
 import { updateDocumentStatusAction } from '@/features/document/document.actions';
@@ -38,6 +43,10 @@ import { DocumentSwitcher } from '@/features/editor/core/components/DocumentSwit
 import { EditorHelpPanel } from '@/features/editor/core/components/EditorHelpPanel';
 import { DisagreementDots } from '@/features/editor/core/components/DisagreementDots';
 import { WsdSenseInventory } from '@/features/editor/wsd/components/WsdSenseInventory';
+import { WsdAddSenseForm, type NewSenseValues } from '@/features/editor/wsd/components/WsdAddSenseForm';
+import { WsdRegisterWordDialog } from '@/features/editor/wsd/components/WsdRegisterWordDialog';
+import { WsdCompletedLog, type CompletedEntry } from '@/features/editor/wsd/components/WsdCompletedLog';
+import { groupRejectionsByToken, isWordLike } from '@/features/editor/wsd/wsd.utils';
 import { FullScreenLoader } from '@/components/Spinner';
 import { buildEditorData, groupAnnotationsByToken } from '@/features/editor/core/editor.utils';
 import { toast } from 'sonner';
@@ -45,14 +54,9 @@ import { toast } from 'sonner';
 interface WsdEditorProps {
   workspaceId: string;
   workspaceName: string;
-  isAdmin: boolean;
 }
 
-export default function WsdEditor({
-  workspaceId,
-  workspaceName,
-  isAdmin,
-}: WsdEditorProps) {
+export default function WsdEditor({ workspaceId, workspaceName }: WsdEditorProps) {
   const router = useRouter();
   const { user } = useAuth();
   const currentUser = user?.id ?? null;
@@ -69,12 +73,16 @@ export default function WsdEditor({
   const [senses, setSenses] = useState<WsdSense[]>([]);
   const [sensesLoading, setSensesLoading] = useState(false);
   const [senseFilter, setSenseFilter] = useState('');
-  const [addingSense, setAddingSense] = useState(false);
-  const [newSenseLabel, setNewSenseLabel] = useState('');
-  const [newSenseDescription, setNewSenseDescription] = useState('');
-  const [savingSense, setSavingSense] = useState(false);
-  const [inventoryRefreshKey, setInventoryRefreshKey] = useState(0);
-  const [ambiguousWords, setAmbiguousWords] = useState<Set<string>>(new Set());
+
+  // The workspace's ambiguous-word list as it applies to this text: lowercased form -> sense count.
+  const [ambiguous, setAmbiguous] = useState<Map<string, number>>(new Map());
+  const checkedFormsRef = useRef<Set<string>>(new Set());
+  const [dictVersion, setDictVersion] = useState(0);
+  const dictVersionRef = useRef(0);
+  // Senses the annotator crossed out (✗) per token. Persisted server-side, private to each annotator.
+  const [rejected, setRejected] = useState<Record<string, string[]>>({});
+  const [registerOpen, setRegisterOpen] = useState(false);
+  const [leftTab, setLeftTab] = useState('completed');
 
   // tokenId → all annotations on that token, across annotators. Pre-loaded per
   // document so existing tags show on open (not just after clicking a token).
@@ -127,8 +135,10 @@ export default function WsdEditor({
             setDocumentContent(contentResult.data);
 
             const annResult = await listAnnotationsForDocumentAction(workspaceId, doc.id);
+            const rejResult = await listRejectionsForDocumentAction(workspaceId, doc.id);
             if (!cancelled) {
               setAnnotationsByToken(annResult.ok ? groupAnnotationsByToken(annResult.data) : {});
+              setRejected(rejResult.ok ? groupRejectionsByToken(rejResult.data) : {});
             }
 
             if (savedSession?.scrollPosition) {
@@ -150,23 +160,6 @@ export default function WsdEditor({
     };
   }, [workspaceId, workspaceName, containerRef, lastScrollRef]);
 
-  // The full lexicon drives the "ambiguous occurrences" stat and progress bar.
-  // It is separate from the per-token sense list in the right pane.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const result = await listSensesAction(workspaceId);
-      if (!cancelled && result.ok) {
-        setAmbiguousWords(
-          new Set(result.data.map((sense) => sense.word.toLowerCase())),
-        );
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceId]);
-
   // Load a document's content + all its annotations when switching.
   const loadDocumentContent = useCallback(
     async (docIndex: number) => {
@@ -183,10 +176,8 @@ export default function WsdEditor({
       setSelectedToken(null);
       setSenses([]);
       setSenseFilter('');
-      setAddingSense(false);
-      setNewSenseLabel('');
-      setNewSenseDescription('');
       setAnnotationsByToken({});
+      setRejected({});
 
       const doc = editorData.documents[docIndex];
       setCurrentDocIndex(docIndex);
@@ -205,9 +196,50 @@ export default function WsdEditor({
 
       const annResult = await listAnnotationsForDocumentAction(workspaceId, doc.id);
       setAnnotationsByToken(annResult.ok ? groupAnnotationsByToken(annResult.data) : {});
+      const rejResult = await listRejectionsForDocumentAction(workspaceId, doc.id);
+      setRejected(rejResult.ok ? groupRejectionsByToken(rejResult.data) : {});
     },
     [editorData, workspaceId, containerRef],
   );
+
+  // Forget what we know about the dictionary and re-check the loaded text (after import / edits).
+  const refreshDictionary = useCallback(() => {
+    checkedFormsRef.current.clear();
+    dictVersionRef.current += 1;
+    setAmbiguous(new Map());
+    setDictVersion(dictVersionRef.current);
+  }, []);
+
+  // Auto-scan: check each new token form against the ambiguous-word list so matches highlight.
+  const loadedTokens = documentContent?.tokens;
+  useEffect(() => {
+    if (!loadedTokens) return;
+    const fresh = [...new Set(loadedTokens.map(t => t.form).filter(isWordLike))].filter(
+      f => !checkedFormsRef.current.has(f.toLowerCase()),
+    );
+    if (fresh.length === 0) return;
+    fresh.forEach(f => checkedFormsRef.current.add(f.toLowerCase()));
+    const version = dictVersionRef.current;
+    (async () => {
+      for (let i = 0; i < fresh.length; i += 1000) {
+        const chunk = fresh.slice(i, i + 1000);
+        const res = await matchAmbiguousWordsAction(workspaceId, chunk);
+        if (version !== dictVersionRef.current) return;
+        if (!res.ok) {
+          chunk.forEach(f => checkedFormsRef.current.delete(f.toLowerCase()));
+          toast.error(res.error || 'Could not check the ambiguous-word list');
+          return;
+        }
+        setAmbiguous(prev => {
+          const next = new Map(prev);
+          for (const m of res.data) next.set(m.word.toLowerCase(), m.senseCount);
+          return next;
+        });
+      }
+    })();
+  }, [loadedTokens, workspaceId, dictVersion]);
+
+  const isAmbiguous = useCallback((form: string) => ambiguous.has(form.toLowerCase()), [ambiguous]);
 
   const pagination = usePaginatedDocument({
     workspaceId,
@@ -221,9 +253,6 @@ export default function WsdEditor({
     async (token: TokenDto) => {
       setSelectedToken(token);
       setSenseFilter('');
-      setAddingSense(false);
-      setNewSenseLabel('');
-      setNewSenseDescription('');
       setSensesLoading(true);
       const sensesResult = await listSensesAction(workspaceId, token.form);
       setSensesLoading(false);
@@ -238,9 +267,6 @@ export default function WsdEditor({
         // Clicking the selected token again deselects it.
         setSelectedToken(null);
         setSenses([]);
-        setAddingSense(false);
-        setNewSenseLabel('');
-        setNewSenseDescription('');
         return;
       }
       selectToken(token);
@@ -254,78 +280,28 @@ export default function WsdEditor({
     if (selectedToken) selectToken(selectedToken);
   }, [selectedToken, selectToken]);
 
-  const isAmbiguousToken = useCallback(
-    (token: TokenDto) => ambiguousWords.has(token.form.toLowerCase()),
-    [ambiguousWords],
+  // Move to the next / previous highlighted (ambiguous) word. With nothing selected,
+  // anchors on the first / last one: the keyboard-only entry point.
+  const stepAmbiguous = useCallback(
+    (direction: 1 | -1) => {
+      const tokens = documentContent?.tokens;
+      if (!tokens || tokens.length === 0) return;
+      const from = selectedToken
+        ? tokens.findIndex(t => t.id === selectedToken.id)
+        : direction === 1
+          ? -1
+          : tokens.length;
+      for (let i = from + direction; i >= 0 && i < tokens.length; i += direction) {
+        if (isAmbiguous(tokens[i].form)) {
+          selectToken(tokens[i]);
+          return;
+        }
+      }
+    },
+    [documentContent, selectedToken, selectToken, isAmbiguous],
   );
-
-  // Move selection to the next ambiguous token (loading its senses). If the
-  // document has no ambiguous tokens at all, fall back to every token so
-  // annotators can still add new senses manually.
-  const advanceToNextToken = useCallback(() => {
-    const tokens = documentContent?.tokens;
-    if (!tokens || tokens.length === 0) return;
-    const hasAmbiguous = tokens.some(isAmbiguousToken);
-
-    if (!selectedToken) {
-      const first = hasAmbiguous
-        ? tokens.findIndex(isAmbiguousToken)
-        : 0;
-      selectToken(tokens[first >= 0 ? first : 0]);
-      return;
-    }
-
-    const idx = tokens.findIndex(t => t.id === selectedToken.id);
-    if (idx < 0) return;
-
-    if (hasAmbiguous) {
-      const next = tokens.findIndex(
-        (token, index) => index > idx && isAmbiguousToken(token),
-      );
-      if (next >= 0) selectToken(tokens[next]);
-      return;
-    }
-
-    if (idx < tokens.length - 1) selectToken(tokens[idx + 1]);
-  }, [documentContent, selectedToken, selectToken, isAmbiguousToken]);
-
-  const moveToPrevToken = useCallback(() => {
-    const tokens = documentContent?.tokens;
-    if (!tokens || tokens.length === 0) return;
-    const hasAmbiguous = tokens.some(isAmbiguousToken);
-
-    if (!selectedToken) {
-      let last = tokens.length - 1;
-      if (hasAmbiguous) {
-        last = -1;
-        for (let i = tokens.length - 1; i >= 0; i--) {
-          if (isAmbiguousToken(tokens[i])) {
-            last = i;
-            break;
-          }
-        }
-      }
-      selectToken(tokens[last >= 0 ? last : tokens.length - 1]);
-      return;
-    }
-
-    const idx = tokens.findIndex(t => t.id === selectedToken.id);
-    if (idx < 0) return;
-
-    if (hasAmbiguous) {
-      let previous = -1;
-      for (let i = idx - 1; i >= 0; i--) {
-        if (isAmbiguousToken(tokens[i])) {
-          previous = i;
-          break;
-        }
-      }
-      if (previous >= 0) selectToken(tokens[previous]);
-      return;
-    }
-
-    if (idx > 0) selectToken(tokens[idx - 1]);
-  }, [documentContent, selectedToken, selectToken, isAmbiguousToken]);
+  const advanceToNextToken = useCallback(() => stepAmbiguous(1), [stepAmbiguous]);
+  const moveToPrevToken = useCallback(() => stepAmbiguous(-1), [stepAmbiguous]);
 
   const getMyAnnotation = useCallback(
     (tokenId: string): WsdAnnotation | undefined => {
@@ -342,76 +318,62 @@ export default function WsdEditor({
     return all.filter(a => a.annotatorId !== currentUser);
   };
 
+  // ✓: save the word-sense mapping for this occurrence. Returns whether it saved.
+  const confirmSense = useCallback(
+    async (token: TokenDto, sense: WsdSense): Promise<boolean> => {
+      const result = await upsertAnnotationAction(workspaceId, token.id, sense.id);
+      if (!result.ok) {
+        toast.error(result.error || 'Failed to tag token');
+        return false;
+      }
+      // Carry label / word / sentence so the inline tag and the Completed log render immediately
+      // (the upsert response doesn't resolve them server-side).
+      const saved: WsdAnnotation = {
+        ...result.data,
+        senseLabel: sense.senseLabel,
+        tokenForm: token.form,
+        sentenceIndex: token.sentenceIndex,
+      };
+      setAnnotationsByToken(prev => {
+        const others = (prev[token.id] ?? []).filter(a => a.annotatorId !== saved.annotatorId);
+        return { ...prev, [token.id]: [...others, saved] };
+      });
+      setRejected(prev => ({ ...prev, [token.id]: (prev[token.id] ?? []).filter(id => id !== sense.id) }));
+      return true;
+    },
+    [workspaceId],
+  );
+
   const handlePickSense = useCallback(
     async (sense: WsdSense) => {
       if (!selectedToken) return;
-      const tokenId = selectedToken.id;
-      const result = await upsertAnnotationAction(workspaceId, tokenId, sense.id);
-      if (!result.ok) {
-        toast.error(result.error || 'Failed to tag token');
-        return;
-      }
-      // Carry the sense label so the inline tag renders immediately (the upsert
-      // response doesn't resolve it server-side).
-      const saved: WsdAnnotation = { ...result.data, senseLabel: sense.senseLabel };
-      setAnnotationsByToken(prev => {
-        const others = (prev[tokenId] ?? []).filter(a => a.annotatorId !== saved.annotatorId);
-        return { ...prev, [tokenId]: [...others, saved] };
-      });
-      advanceToNextToken();
+      if (await confirmSense(selectedToken, sense)) advanceToNextToken();
     },
-    [selectedToken, workspaceId, advanceToNextToken],
+    [selectedToken, confirmSense, advanceToNextToken],
   );
 
-  const handleAddSense = useCallback(
-    async (event: FormEvent) => {
-      event.preventDefault();
-      if (!selectedToken) return;
-      const senseLabel = newSenseLabel.trim();
-      if (!senseLabel) return;
-
-      setSavingSense(true);
-      const result = await createSenseAndAnnotateAction(workspaceId, {
-        tokenId: selectedToken.id,
-        senseLabel,
-        description: newSenseDescription.trim() || null,
+  // Create a sense for the selected occurrence ("Add New" or registering an unlisted word),
+  // add its word to the ambiguous list so it highlights, and confirm it here.
+  const createSenseForSelected = useCallback(
+    async (values: NewSenseValues): Promise<string | null> => {
+      if (!selectedToken) return 'Select a word first.';
+      const result = await createSenseAction(workspaceId, {
+        word: values.word,
+        senseLabel: values.senseLabel,
+        gloss: values.gloss.trim() || null,
+        examples: values.examples.trim() || null,
       });
-      setSavingSense(false);
-      if (!result.ok) {
-        toast.error(result.error || 'Failed to add the sense.');
-        return;
-      }
-
-      const { sense, annotation } = result.data;
-      setSenses((prev) =>
-        prev.some((existing) => existing.id === sense.id) ? prev : [...prev, sense],
-      );
-      setAmbiguousWords((prev) => {
-        const next = new Set(prev);
-        next.add(sense.word.toLowerCase());
-        return next;
-      });
-      setAnnotationsByToken((prev) => {
-        const tokenId = annotation.tokenId;
-        const others = (prev[tokenId] ?? []).filter(
-          (existing) => existing.annotatorId !== annotation.annotatorId,
-        );
-        return { ...prev, [tokenId]: [...others, annotation] };
-      });
-      setInventoryRefreshKey((key) => key + 1);
-      setAddingSense(false);
-      setNewSenseLabel('');
-      setNewSenseDescription('');
-      toast.success(`Added sense “${sense.senseLabel}” and tagged the token.`);
-      advanceToNextToken();
+      if (!result.ok) return result.error || 'Failed to add sense.';
+      const created = result.data;
+      const key = created.word.toLowerCase();
+      checkedFormsRef.current.add(key);
+      setAmbiguous(prev => new Map(prev).set(key, (prev.get(key) ?? 0) + 1));
+      if (key === selectedToken.form.toLowerCase()) setSenses(prev => [...prev, created]);
+      setRegisterOpen(false);
+      if (await confirmSense(selectedToken, created)) advanceToNextToken();
+      return null;
     },
-    [
-      selectedToken,
-      workspaceId,
-      newSenseLabel,
-      newSenseDescription,
-      advanceToNextToken,
-    ],
+    [selectedToken, workspaceId, confirmSense, advanceToNextToken],
   );
 
   const clearSelectedTokenAnnotation = useCallback(async () => {
@@ -432,6 +394,44 @@ export default function WsdEditor({
       return next;
     });
   }, [selectedToken, getMyAnnotation, workspaceId]);
+
+  // ✗ (persisted per annotator): this sense doesn't fit here. Click again to undo. The server
+  // also drops your ✓ if it was on this sense.
+  const handleRejectSense = useCallback(
+    async (sense: WsdSense) => {
+      if (!selectedToken) return;
+      const tokenId = selectedToken.id;
+      const already = (rejected[tokenId] ?? []).includes(sense.id);
+      const result = already
+        ? await unrejectSenseAction(workspaceId, tokenId, sense.id)
+        : await rejectSenseAction(workspaceId, tokenId, sense.id);
+      if (!result.ok) {
+        toast.error(result.error || 'Failed to update rejection');
+        return;
+      }
+      setRejected(prev => {
+        const current = prev[tokenId] ?? [];
+        return { ...prev, [tokenId]: already ? current.filter(id => id !== sense.id) : [...current, sense.id] };
+      });
+      const mine = getMyAnnotation(tokenId);
+      if (!already && mine?.senseId === sense.id) {
+        setAnnotationsByToken(prev => {
+          const remaining = (prev[tokenId] ?? []).filter(a => a.id !== mine.id);
+          const next = { ...prev };
+          if (remaining.length === 0) delete next[tokenId];
+          else next[tokenId] = remaining;
+          return next;
+        });
+      }
+    },
+    [selectedToken, rejected, workspaceId, getMyAnnotation],
+  );
+
+  // The Dictionary tab changed the inventory: re-run highlighting and refresh the open word.
+  const handleDictionaryChanged = useCallback(() => {
+    refreshDictionary();
+    reloadSensesForSelected();
+  }, [refreshDictionary, reloadSensesForSelected]);
 
   const filteredSenses = senses.filter(s => {
     if (!senseFilter.trim()) return true;
@@ -468,6 +468,7 @@ export default function WsdEditor({
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't hijack typing in the sense-search box.
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (registerOpen) return;
 
       // Mark complete & advance — ⌘/Ctrl+Enter.
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -482,9 +483,6 @@ export default function WsdEditor({
       if (e.key === 'Escape') {
         setSelectedToken(null);
         setSenses([]);
-        setAddingSense(false);
-        setNewSenseLabel('');
-        setNewSenseDescription('');
         return;
       }
 
@@ -538,6 +536,7 @@ export default function WsdEditor({
     selectedToken,
     filteredSenses,
     handlePickSense,
+    registerOpen,
   ]);
 
   // Keep the keyboard-selected token in view as selection moves.
@@ -548,23 +547,51 @@ export default function WsdEditor({
       ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [selectedToken]);
 
-  // Per-document progress for the current annotator.
+  // Progress over the loaded text: highlighted words (plus any word you tagged) vs. ones you resolved.
   const stats = useMemo(() => {
     const tokens = documentContent?.tokens ?? [];
-    let tagged = 0;
-    let ambiguous = 0;
+    let ambiguousCount = 0;
+    let resolved = 0;
     for (const token of tokens) {
-      if (!ambiguousWords.has(token.form.toLowerCase())) continue;
-      ambiguous += 1;
-      if (getMyAnnotation(token.id)) tagged += 1;
+      const mine = getMyAnnotation(token.id);
+      if (mine) resolved++;
+      if (mine || isAmbiguous(token.form)) ambiguousCount++;
     }
-    return {
-      total: tokens.length,
-      ambiguous,
-      tagged,
-      untagged: ambiguous - tagged,
-    };
-  }, [documentContent, getMyAnnotation, ambiguousWords]);
+    return { total: tokens.length, ambiguous: ambiguousCount, resolved, remaining: ambiguousCount - resolved };
+  }, [documentContent, getMyAnnotation, isAmbiguous]);
+
+  // Left-pane log of this annotator's resolved words, oldest first so new ones append at the bottom.
+  const completedEntries = useMemo<CompletedEntry[]>(() => {
+    const tokens = documentContent?.tokens ?? [];
+    const loadedIds = new Set(tokens.map(t => t.id));
+    const sentences = new Map<number, string[]>();
+    for (const t of tokens) {
+      const forms = sentences.get(t.sentenceIndex) ?? [];
+      forms.push(t.form);
+      sentences.set(t.sentenceIndex, forms);
+    }
+    return Object.values(annotationsByToken)
+      .flat()
+      .filter(a => !!currentUser && a.annotatorId === currentUser)
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+      .map(annotation => {
+        const text =
+          annotation.sentenceIndex != null ? sentences.get(annotation.sentenceIndex)?.join(' ') : undefined;
+        return {
+          annotation,
+          snippet: text ? (text.length > 56 ? `${text.slice(0, 56)}…` : text) : null,
+          navigable: loadedIds.has(annotation.tokenId),
+        };
+      });
+  }, [annotationsByToken, documentContent, currentUser]);
+
+  const selectCompleted = useCallback(
+    (tokenId: string) => {
+      const token = documentContent?.tokens.find(t => t.id === tokenId);
+      if (token) selectToken(token);
+    },
+    [documentContent, selectToken],
+  );
 
   if (loading) {
     return <FullScreenLoader label="Loading WSD Editor..." />;
@@ -584,7 +611,7 @@ export default function WsdEditor({
           <div className="bg-slate-100 dark:bg-slate-800 rounded-lg p-4 text-left mb-6">
             <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">To fix this:</p>
             <ol className="text-sm text-slate-600 dark:text-slate-400 space-y-1 list-decimal list-inside">
-              <li>Start the backend: <code className="bg-slate-200 dark:bg-slate-700 px-1 rounded">genesis.bat run</code></li>
+              <li>Start the API: <code className="bg-slate-200 dark:bg-slate-700 px-1 rounded">pnpm dev:api</code></li>
               <li>Ensure a document is uploaded to the workspace</li>
               <li>Wait for document tokenization to complete</li>
             </ol>
@@ -636,7 +663,7 @@ export default function WsdEditor({
 
           <div className="flex items-center gap-4">
             <Badge variant="secondary" className="text-sm">
-              {stats.tagged}/{stats.ambiguous} ambiguous tagged{currentUser ? ' by you' : ''}
+              {stats.resolved}/{stats.ambiguous} ambiguous words resolved{currentUser ? ' by you' : ''}
             </Badge>
             <Button
               variant="outline"
@@ -697,13 +724,25 @@ export default function WsdEditor({
 
       <div className="flex h-[calc(100vh-73px)]">
         {/* Left Pane - Sense Inventory */}
-        <aside className="w-80 border-r border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/60 backdrop-blur-sm">
-          <WsdSenseInventory
-            workspaceId={workspaceId}
-            isAdmin={isAdmin}
-            onSensesChanged={reloadSensesForSelected}
-            refreshToken={inventoryRefreshKey}
-          />
+        <aside className="w-80 border-r border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/60 backdrop-blur-sm overflow-hidden">
+          <Tabs value={leftTab} onValueChange={setLeftTab} className="h-full gap-0">
+            <div className="p-3 border-b border-slate-200 dark:border-slate-800">
+              <TabsList className="w-full">
+                <TabsTrigger value="completed">Completed ({stats.resolved})</TabsTrigger>
+                <TabsTrigger value="dictionary">Dictionary</TabsTrigger>
+              </TabsList>
+            </div>
+            <TabsContent value="completed" className="flex-1 overflow-y-auto p-3">
+              <WsdCompletedLog
+                entries={completedEntries}
+                selectedTokenId={selectedToken?.id ?? null}
+                onSelect={selectCompleted}
+              />
+            </TabsContent>
+            <TabsContent value="dictionary" className="flex-1 min-h-0">
+              <WsdSenseInventory workspaceId={workspaceId} onSensesChanged={handleDictionaryChanged} />
+            </TabsContent>
+          </Tabs>
         </aside>
 
         {/* Middle - Text Editor */}
@@ -721,7 +760,7 @@ export default function WsdEditor({
                   {documentContent?.tokens?.map(token => {
                     const mine = getMyAnnotation(token.id);
                     const isSelected = selectedToken?.id === token.id;
-                    const isAmbiguous = isAmbiguousToken(token);
+                    const ambiguousToken = isAmbiguous(token.form);
                     const others = getOtherAnnotations(token.id).filter(a => a.senseId !== mine?.senseId);
                     const disagreementTitle = others.length > 0
                       ? others.map(a => `${a.annotatorId}: ${a.senseLabel ?? a.senseId}`).join('\n')
@@ -736,16 +775,16 @@ export default function WsdEditor({
                             ? 'ring-2 ring-[var(--primary)] ring-offset-1 bg-indigo-50 dark:bg-indigo-950/40 shadow-md'
                             : mine
                               ? 'bg-green-100 dark:bg-green-900/40 hover:shadow-md'
-                              : isAmbiguous
-                                ? 'bg-violet-50/70 dark:bg-violet-950/25 hover:bg-violet-100 dark:hover:bg-violet-900/40'
+                              : ambiguousToken
+                                ? 'bg-amber-100 dark:bg-amber-900/30 border-b-2 border-amber-400 hover:bg-amber-200 dark:hover:bg-amber-900/50'
                                 : 'hover:bg-slate-100 dark:hover:bg-slate-800/50'
                         }`}
                         title={
                           mine
                             ? `sense: ${mine.senseLabel ?? mine.senseId}`
-                            : isAmbiguous
-                              ? 'ambiguous word — click to tag'
-                              : 'click to tag'
+                            : ambiguousToken
+                              ? 'ambiguous word: click to choose its sense'
+                              : 'click to register as an ambiguous word'
                         }
                       >
                         <span className="text-lg leading-tight">{token.form}</span>
@@ -753,13 +792,9 @@ export default function WsdEditor({
                           <span className="text-[10px] font-bold mt-0.5 leading-none text-green-700 dark:text-green-400 max-w-[120px] truncate">
                             {mine.senseLabel ?? '✓'}
                           </span>
-                        ) : isAmbiguous ? (
-                          <span className="text-[10px] text-violet-500 mt-0.5 leading-none">
-                            ●
-                          </span>
                         ) : (
-                          <span className="text-[10px] text-slate-300 dark:text-slate-600 mt-0.5 leading-none">
-                            &mdash;
+                          <span className="text-[10px] mt-0.5 leading-none invisible" aria-hidden>
+                            &middot;
                           </span>
                         )}
                         <DisagreementDots
@@ -789,15 +824,14 @@ export default function WsdEditor({
           <EditorHelpPanel
             accent="indigo"
             steps={[
-              { badge: '1', body: <><strong>Violet words</strong> are in the ambiguous-word list; click one to tag it</> },
-              { badge: '2', body: <><strong>Pick a sense</strong> (or press 1–9) to tag the word</> },
-              { badge: '3', body: <><strong>Arrow keys</strong> jump between ambiguous words; click any other word to tag it too</> },
-              { badge: '4', body: <>No sense fits? <strong>Add a new one</strong> for that word in the right pane</> },
+              { badge: '1', body: <><strong>Click a highlighted word</strong> to see its senses</> },
+              { badge: '2', body: <>Press <strong>✓</strong> on the sense that fits (or 1–9); <strong>✗</strong> dims one that doesn&apos;t</> },
+              { badge: '3', body: <>No sense fits, or the word isn&apos;t highlighted? <strong>Add New</strong> / <strong>Register</strong> it</> },
             ]}
             shortcuts={[
-              { keys: ['1', '–', '9'], label: 'Pick Nth sense' },
-              { keys: ['→', 'Tab'], label: 'Next token' },
-              { keys: ['←'], label: 'Prev token' },
+              { keys: ['1', '–', '9'], label: 'Confirm Nth sense (✓)' },
+              { keys: ['→', 'Tab'], label: 'Next highlighted word' },
+              { keys: ['←'], label: 'Previous highlighted word' },
               { keys: ['Del'], label: 'Remove your tag' },
               { keys: ['[', ']'], label: 'Previous / next document' },
               { keys: ['⌘/Ctrl', '↵'], label: 'Mark complete & advance' },
@@ -833,59 +867,82 @@ export default function WsdEditor({
               <p className="text-sm text-slate-500 px-2 py-4">Loading senses…</p>
             )}
 
-            {selectedToken && !sensesLoading && senses.length === 0 && !addingSense && (
-              <div className="px-2 py-4 text-sm text-slate-500">
-                <p className="font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  No senses defined for this word yet.
+            {selectedToken && !sensesLoading && senses.length === 0 && (
+              <div className="px-2 py-4 text-sm text-slate-500 space-y-3">
+                <p className="font-medium text-slate-700 dark:text-slate-300">
+                  &ldquo;{selectedToken.form}&rdquo; is not in the ambiguous-word list.
                 </p>
-                <p>
-                  Add the first sense below — it is saved to the workspace inventory and
-                  immediately available to everyone.
-                </p>
-                <p className="mt-1 text-xs">
-                  The imported list may use base forms; if this is an inflected form,
-                  adding a sense here creates an entry for this exact form.
-                </p>
-                <Button
-                  size="sm"
-                  className="mt-3"
-                  onClick={() => setAddingSense(true)}
-                >
-                  Add a sense for “{selectedToken.form}”
-                </Button>
+                {isWordLike(selectedToken.form) ? (
+                  <>
+                    <p>If it is ambiguous here, register it with its sense, gloss and an example.</p>
+                    <Button size="sm" className="w-full" onClick={() => setRegisterOpen(true)}>
+                      Register as ambiguous word
+                    </Button>
+                  </>
+                ) : (
+                  <p>Punctuation can&apos;t be registered.</p>
+                )}
               </div>
             )}
 
             {selectedToken && !sensesLoading && filteredSenses.map((sense, idx) => {
               const mine = getMyAnnotation(selectedToken.id);
               const isMine = mine?.senseId === sense.id;
+              const isRejected = (rejected[selectedToken.id] ?? []).includes(sense.id);
               return (
-                <button
+                <div
                   key={sense.id}
-                  onClick={() => handlePickSense(sense)}
-                  className={`w-full text-left px-3 py-2 rounded-lg transition border ${
+                  className={`rounded-lg border px-3 py-2 transition ${
                     isMine
                       ? 'border-green-500 bg-green-50 dark:bg-green-900/30'
-                      : 'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                      : isRejected
+                        ? 'border-slate-200 dark:border-slate-700 opacity-50'
+                        : 'border-slate-200 dark:border-slate-700'
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="font-semibold text-sm text-slate-900 dark:text-white">
-                      {sense.senseLabel}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        {idx < 9 && (
+                          <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono flex-shrink-0">
+                            {idx + 1}
+                          </kbd>
+                        )}
+                        <span className={`font-semibold text-sm text-slate-900 dark:text-white ${isRejected ? 'line-through' : ''}`}>
+                          {sense.senseLabel}
+                        </span>
+                      </div>
+                      {sense.gloss && (
+                        <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">{sense.gloss}</div>
+                      )}
+                      {sense.examples && (
+                        <div className="text-xs italic text-slate-500 mt-1">&ldquo;{sense.examples}&rdquo;</div>
+                      )}
                     </div>
-                    {idx < 9 && (
-                      <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono flex-shrink-0">
-                        {idx + 1}
-                      </kbd>
-                    )}
+                    <div className="flex gap-1 flex-shrink-0">
+                      <Button
+                        size="icon"
+                        variant={isMine ? 'default' : 'outline'}
+                        className={`h-8 w-8 ${isMine ? 'bg-green-600 hover:bg-green-700 text-white' : 'text-green-700 hover:text-green-800'}`}
+                        aria-label={`Confirm sense ${sense.senseLabel}`}
+                        title="This sense fits (✓)"
+                        onClick={() => handlePickSense(sense)}
+                      >
+                        <Check className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        className={`h-8 w-8 ${isRejected ? 'bg-red-50 text-red-700' : 'text-red-600 hover:text-red-700'}`}
+                        aria-label={`Reject sense ${sense.senseLabel}`}
+                        title="This sense doesn't fit (✗, saved). Click again to undo"
+                        onClick={() => handleRejectSense(sense)}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
                   </div>
-                  <div className="text-xs text-slate-500 mt-0.5">{sense.word}</div>
-                  {sense.description && (
-                    <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                      {sense.description}
-                    </div>
-                  )}
-                </button>
+                </div>
               );
             })}
 
@@ -893,55 +950,20 @@ export default function WsdEditor({
               <p className="text-sm text-slate-500 px-2 py-4">No senses match the filter.</p>
             )}
 
-            {selectedToken && !sensesLoading && senses.length > 0 && !addingSense && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full"
-                onClick={() => setAddingSense(true)}
-              >
-                + Add another sense for “{selectedToken.form}”
-              </Button>
-            )}
-
-            {selectedToken && addingSense && (
-              <form
-                onSubmit={handleAddSense}
-                className="rounded-lg border border-slate-200 p-3 space-y-2 dark:border-slate-700"
-              >
-                <p className="text-xs font-medium text-slate-600 dark:text-slate-400">
-                  New sense for “{selectedToken.form}”
-                </p>
-                <Input
-                  placeholder="Sense label (Assamese)"
-                  value={newSenseLabel}
-                  onChange={(event) => setNewSenseLabel(event.target.value)}
-                  required
-                />
-                <Textarea
-                  placeholder="English description (optional)"
-                  value={newSenseDescription}
-                  onChange={(event) => setNewSenseDescription(event.target.value)}
-                  rows={2}
-                />
-                <div className="flex gap-2">
-                  <Button type="submit" size="sm" disabled={savingSense}>
-                    {savingSense ? 'Saving…' : 'Save sense & tag'}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      setAddingSense(false);
-                      setNewSenseLabel('');
-                      setNewSenseDescription('');
-                    }}
-                  >
-                    Cancel
-                  </Button>
+            {selectedToken && !sensesLoading && senses.length > 0 && (
+              <details key={selectedToken.id} className="rounded-lg border border-dashed border-slate-300 dark:border-slate-600">
+                <summary className="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
+                  + Add New
+                </summary>
+                <div className="p-3 pt-1">
+                  <p className="text-xs text-slate-500 mb-2">None of the senses above fit? Add one for &ldquo;{selectedToken.form}&rdquo;.</p>
+                  <WsdAddSenseForm
+                    word={selectedToken.form}
+                    submitLabel="Add & select sense"
+                    onSubmit={createSenseForSelected}
+                  />
                 </div>
-              </form>
+              </details>
             )}
           </div>
 
@@ -955,35 +977,29 @@ export default function WsdEditor({
                 <span className="font-bold">{editorData.totalDocuments}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-600 dark:text-slate-400">Tokens (loaded)</span>
-                <span className="font-bold">{stats.total}</span>
+                <span className="text-slate-600 dark:text-slate-400">Ambiguous words</span>
+                <span className="font-bold">{stats.ambiguous}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-600 dark:text-slate-400">
-                  Ambiguous occurrences (loaded)
-                </span>
-                <span className="font-bold text-violet-600">{stats.ambiguous}</span>
+                <span className="text-slate-600 dark:text-slate-400">Resolved</span>
+                <span className="font-bold text-green-600">{stats.resolved}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-600 dark:text-slate-400">Tagged</span>
-                <span className="font-bold text-green-600">{stats.tagged}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-600 dark:text-slate-400">Untagged</span>
-                <span className="font-bold text-orange-500">{stats.untagged}</span>
+                <span className="text-slate-600 dark:text-slate-400">Remaining</span>
+                <span className="font-bold text-orange-500">{stats.remaining}</span>
               </div>
             </div>
 
             {stats.ambiguous > 0 && (
               <div className="mt-4">
                 <div className="flex justify-between text-xs text-slate-500 mb-1">
-                  <span>Ambiguous progress</span>
-                  <span>{Math.round((stats.tagged / stats.ambiguous) * 100)}%</span>
+                  <span>Progress</span>
+                  <span>{Math.round((stats.resolved / stats.ambiguous) * 100)}%</span>
                 </div>
                 <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-gradient-to-r from-[var(--primary)] to-purple-500 rounded-full transition-all duration-500"
-                    style={{ width: `${(stats.tagged / stats.ambiguous) * 100}%` }}
+                    style={{ width: `${(stats.resolved / stats.ambiguous) * 100}%` }}
                   />
                 </div>
               </div>
@@ -991,6 +1007,13 @@ export default function WsdEditor({
           </div>
         </aside>
       </div>
+
+      <WsdRegisterWordDialog
+        open={registerOpen && !!selectedToken}
+        onOpenChange={setRegisterOpen}
+        word={selectedToken?.form ?? ''}
+        onSubmit={createSenseForSelected}
+      />
     </div>
   );
 }

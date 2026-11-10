@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
-import type { WsdSense, WsdSenseImportSummary } from '@/features/editor/wsd/wsd.contracts';
+import type { ImportSensesResult, WsdSense } from '@/features/editor/wsd/wsd.contracts';
 import {
   createSenseAction,
   deleteSenseAction,
@@ -35,16 +35,18 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
   const [adding, setAdding] = useState(false);
   const [newWord, setNewWord] = useState('');
   const [newLabel, setNewLabel] = useState('');
-  const [newDescription, setNewDescription] = useState('');
+  const [newGloss, setNewGloss] = useState('');
+  const [newExamples, setNewExamples] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editWord, setEditWord] = useState('');
   const [editLabel, setEditLabel] = useState('');
-  const [editDescription, setEditDescription] = useState('');
+  const [editGloss, setEditGloss] = useState('');
+  const [editExamples, setEditExamples] = useState('');
 
   const [importing, setImporting] = useState(false);
-  const [importSummary, setImportSummary] = useState<WsdSenseImportSummary | null>(null);
+  const [importSummary, setImportSummary] = useState<ImportSensesResult | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(async () => {
@@ -78,7 +80,8 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
       return (
         sense.word.toLowerCase().includes(query) ||
         sense.senseLabel.toLowerCase().includes(query) ||
-        (sense.description ?? '').toLowerCase().includes(query)
+        (sense.gloss ?? '').toLowerCase().includes(query) ||
+        (sense.examples ?? '').toLowerCase().includes(query)
       );
     });
 
@@ -112,7 +115,8 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
     const result = await createSenseAction(workspaceId, {
       word: newWord.trim(),
       senseLabel: newLabel.trim(),
-      description: newDescription.trim() || null,
+      gloss: newGloss.trim() || null,
+      examples: newExamples.trim() || null,
     });
     setSubmitting(false);
     if (!result.ok) {
@@ -122,7 +126,8 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
     setSenses((prev) => [...prev, result.data]);
     setNewWord('');
     setNewLabel('');
-    setNewDescription('');
+    setNewGloss('');
+    setNewExamples('');
     setAdding(false);
     toast.success('Sense added to the inventory.');
   };
@@ -131,7 +136,8 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
     setEditingId(sense.id);
     setEditWord(sense.word);
     setEditLabel(sense.senseLabel);
-    setEditDescription(sense.description ?? '');
+    setEditGloss(sense.gloss ?? '');
+    setEditExamples(sense.examples ?? '');
   };
 
   const handleSaveEdit = async (senseId: string) => {
@@ -139,7 +145,8 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
     const result = await updateSenseAction(workspaceId, senseId, {
       word: editWord.trim(),
       senseLabel: editLabel.trim(),
-      description: editDescription.trim() || null,
+      gloss: editGloss.trim() || null,
+      examples: editExamples.trim() || null,
     });
     if (!result.ok) {
       setError(result.error);
@@ -181,13 +188,19 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
     }
     setImportSummary(result.data);
     toast.success(
-      `Imported ${result.data.created} sense${result.data.created === 1 ? '' : 's'} from ${result.data.sheetName}.`,
+      `Imported ${result.data.inserted} sense${result.data.inserted === 1 ? '' : 's'}.`,
     );
     await reload();
   };
 
-  const download = (kind: 'senses' | 'annotations', format: 'csv' | 'xlsx') => {
-    window.location.assign(`/api/wsd/${workspaceId}/export/${kind}?format=${format}`);
+  const downloadAnnotations = (format: 'csv' | 'xlsx') => {
+    window.location.assign(
+      `/api/wsd/${workspaceId}/export/annotations?format=${format}`,
+    );
+  };
+
+  const downloadDictionary = () => {
+    window.location.assign(`/api/wsd/${workspaceId}/dictionary?format=csv`);
   };
 
   return (
@@ -214,7 +227,7 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
               <input
                 ref={importInputRef}
                 type="file"
-                accept=".xls,.xlsx,.xlsm,.csv"
+                accept=".xls,.xlsx,.xlsm,.csv,.tsv,.json,.jsonl"
                 className="hidden"
                 onChange={handleImportFile}
               />
@@ -225,7 +238,7 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
                 onClick={() => importInputRef.current?.click()}
               >
                 <Upload className="w-4 h-4" />
-                {importing ? 'Importing…' : 'Import Excel list'}
+                {importing ? 'Importing…' : 'Import word list'}
               </Button>
               <Button variant="outline" className="gap-2" onClick={() => setAdding((value) => !value)}>
                 <Plus className="w-4 h-4" />
@@ -233,11 +246,11 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
               </Button>
             </>
           )}
-          <Button variant="outline" className="gap-2" onClick={() => download('annotations', 'csv')}>
+          <Button variant="outline" className="gap-2" onClick={() => downloadAnnotations('csv')}>
             <Download className="w-4 h-4" />
             Export annotations
           </Button>
-          <Button variant="outline" className="gap-2" onClick={() => download('senses', 'xlsx')}>
+          <Button variant="outline" className="gap-2" onClick={downloadDictionary}>
             <FileSpreadsheet className="w-4 h-4" />
             Export word list
           </Button>
@@ -253,25 +266,12 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
       {importSummary && (
         <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
           <p className="font-medium">
-            Imported from “{importSummary.sheetName}”: {importSummary.created} new senses
-            {' '}from {importSummary.words} words.
+            Import finished: {importSummary.inserted} inserted, {importSummary.updated} updated,
+            {' '}{importSummary.skipped} skipped.
           </p>
           <p className="mt-1 text-xs">
-            {importSummary.sensesInFile} senses in file · {importSummary.skippedDuplicates} already
-            existed · {importSummary.skippedInvalid} invalid rows
-            {importSummary.duplicatesInFile > 0
-              ? ` · ${importSummary.duplicatesInFile} repeated pairs in file`
-              : ''}
+            {importSummary.totalProcessed} entries processed.
           </p>
-          {importSummary.errors.length > 0 && (
-            <ul className="mt-2 list-inside list-disc text-xs">
-              {importSummary.errors.map((rowError) => (
-                <li key={`${rowError.rowNumber}-${rowError.message}`}>
-                  Row {rowError.rowNumber}: {rowError.message}
-                </li>
-              ))}
-            </ul>
-          )}
         </div>
       )}
 
@@ -297,9 +297,16 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
           </div>
           <Textarea
             className="mt-3"
-            placeholder="English description (optional)"
-            value={newDescription}
-            onChange={(event) => setNewDescription(event.target.value)}
+            placeholder="Gloss / English meaning (optional)"
+            value={newGloss}
+            onChange={(event) => setNewGloss(event.target.value)}
+            rows={2}
+          />
+          <Textarea
+            className="mt-2"
+            placeholder="Example sentence(s) (optional)"
+            value={newExamples}
+            onChange={(event) => setNewExamples(event.target.value)}
             rows={2}
           />
           <Button type="submit" className="mt-3" disabled={submitting}>
@@ -312,7 +319,7 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <Input
           className="pl-9"
-          placeholder="Search words, sense labels, or descriptions…"
+          placeholder="Search words, sense labels, glosses, or examples…"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
@@ -360,10 +367,16 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
                           <Input value={editLabel} onChange={(event) => setEditLabel(event.target.value)} />
                         </div>
                         <Textarea
-                          value={editDescription}
-                          onChange={(event) => setEditDescription(event.target.value)}
+                          value={editGloss}
+                          onChange={(event) => setEditGloss(event.target.value)}
                           rows={2}
-                          placeholder="English description"
+                          placeholder="Gloss / English meaning"
+                        />
+                        <Textarea
+                          value={editExamples}
+                          onChange={(event) => setEditExamples(event.target.value)}
+                          rows={2}
+                          placeholder="Example sentence(s)"
                         />
                         <div className="flex gap-2">
                           <Button size="sm" onClick={() => handleSaveEdit(sense.id)}>
@@ -380,9 +393,14 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
                           <p className="font-medium text-slate-900 dark:text-white">
                             {sense.senseLabel}
                           </p>
-                          {sense.description && (
+                          {sense.gloss && (
                             <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">
-                              {sense.description}
+                              {sense.gloss}
+                            </p>
+                          )}
+                          {sense.examples && (
+                            <p className="mt-0.5 text-sm italic text-slate-500 dark:text-slate-400">
+                              {sense.examples}
                             </p>
                           )}
                         </div>

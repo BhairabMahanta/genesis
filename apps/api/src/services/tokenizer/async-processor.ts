@@ -145,6 +145,9 @@ export async function processDocument(event: UploadedDocumentEvent): Promise<voi
   await updateDocumentEntity(event.documentId, {
     processingStatus: "COMPLETED",
     processingError: null,
+    // Re-tokenization replaces tokens and cascades POS/WSD annotations; any
+    // previously computed annotation coverage is stale.
+    progress: 0,
     tokenStartIndex: rangeStart,
     tokenEndIndex: rangeStart == null ? null : rangeStart + tokenCount - 1,
   });

@@ -1,0 +1,14 @@
+# Keeps the API image's build context small: no dependencies, build output, the
+# frontend, the legacy Java tree or local secrets.
+**/node_modules
+**/dist
+**/.next
+.git
+legacy
+apps/web/*
+!apps/web/package.json
+apps/api/data
+.env
+.env.*
+!.env.example
+*.log

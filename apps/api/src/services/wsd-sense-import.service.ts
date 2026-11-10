@@ -12,7 +12,7 @@ import { BadRequestException } from "../common/errors.js";
  *    holds the `Assamese` / `English` subheaders.
  *
  * 2. A flat table:
- *      word | sense_label | description
+ *      word | sense_label | gloss
  *    which is what the CSV export produces.
  *
  * The parser never evaluates formulas and never touches the database, so it is
@@ -24,7 +24,7 @@ export interface ParsedSenseRow {
   rowNumber: number;
   word: string;
   senseLabel: string;
-  description: string | null;
+  gloss: string | null;
 }
 
 export interface SenseRowError {
@@ -43,7 +43,7 @@ export interface ParsedSenseWorkbook {
 const MAX_ROWS = 5000;
 const MAX_WORD_LENGTH = 200;
 const MAX_LABEL_LENGTH = 200;
-const MAX_DESCRIPTION_LENGTH = 2000;
+const MAX_GLOSS_LENGTH = 2000;
 
 type CellRow = unknown[];
 
@@ -52,7 +52,7 @@ interface TemplateLayout {
   headerRow: number;
   dataStart: number;
   wordCol: number;
-  blocks: Array<{ labelCol: number; descriptionCol: number | null }>;
+  blocks: Array<{ labelCol: number; glossCol: number | null }>;
 }
 
 interface FlatLayout {
@@ -61,7 +61,7 @@ interface FlatLayout {
   dataStart: number;
   wordCol: number;
   labelCol: number;
-  descriptionCol: number | null;
+  glossCol: number | null;
 }
 
 type Layout = TemplateLayout | FlatLayout;
@@ -107,16 +107,16 @@ function detectLayout(rows: CellRow[]): Layout | null {
         const left = cellLower(subheader[index]);
         const right = cellLower(subheader[index + 1]);
         if (left === "assamese") {
-          return { labelCol: index, descriptionCol: right === "english" ? index + 1 : null };
+          return { labelCol: index, glossCol: right === "english" ? index + 1 : null };
         }
         if (right === "assamese") {
-          return { labelCol: index + 1, descriptionCol: left === "english" ? index : null };
+          return { labelCol: index + 1, glossCol: left === "english" ? index : null };
         }
         if (left === "english") {
           // A single English-only sense column still becomes a label.
-          return { labelCol: index, descriptionCol: null };
+          return { labelCol: index, glossCol: null };
         }
-        return { labelCol: index, descriptionCol: null };
+        return { labelCol: index, glossCol: null };
       });
 
       return {
@@ -128,7 +128,7 @@ function detectLayout(rows: CellRow[]): Layout | null {
       };
     }
 
-    // Flat layout: word + sense_label + description (CSV export shape).
+    // Flat layout: word + sense_label + gloss (CSV export shape).
     const wordCol = headerText.findIndex((value) =>
       /^(assamese\s+)?(ambiguous\s+)?words?$/i.test(value),
     );
@@ -136,8 +136,8 @@ function detectLayout(rows: CellRow[]): Layout | null {
       /^(sense|sense[_\s-]?label|sense label)$/i.test(value),
     );
     if (wordCol >= 0 && labelCol >= 0) {
-      const descriptionCol = headerText.findIndex((value) =>
-        /description|gloss|english|meaning/i.test(value),
+      const glossCol = headerText.findIndex((value) =>
+        /gloss|description|english|meaning/i.test(value),
       );
       return {
         kind: "flat",
@@ -145,7 +145,7 @@ function detectLayout(rows: CellRow[]): Layout | null {
         dataStart: headerRow + 1,
         wordCol,
         labelCol,
-        descriptionCol: descriptionCol >= 0 ? descriptionCol : null,
+        glossCol: glossCol >= 0 ? glossCol : null,
       };
     }
   }
@@ -215,7 +215,7 @@ export function parseSenseWorkbook(
   throw new BadRequestException(
     "Unrecognized spreadsheet layout. Expected the original template " +
       "(Assamese Ambiguous Words + Sense1..SenseN with Assamese/English columns) " +
-      "or a flat table with word, sense_label and description columns.",
+      "or a flat table with word, sense_label and gloss columns.",
   );
 }
 
@@ -241,7 +241,7 @@ function parseSheet(
           : layout.blocks.some(
               (block) =>
                 cell(row[block.labelCol]) !== "" ||
-                (block.descriptionCol != null && cell(row[block.descriptionCol]) !== ""),
+                (block.glossCol != null && cell(row[block.glossCol]) !== ""),
             );
       if (hasSense) {
         errors.push({ rowNumber: rowIndex + 1, message: "Missing ambiguous word" });
@@ -264,25 +264,25 @@ function parseSheet(
         ? [
             {
               label: cell(row[layout.labelCol]),
-              description:
-                layout.descriptionCol == null ? "" : cell(row[layout.descriptionCol]),
+              gloss:
+                layout.glossCol == null ? "" : cell(row[layout.glossCol]),
             },
           ]
         : layout.blocks.map((block) => ({
             label: cell(row[block.labelCol]),
-            description:
-              block.descriptionCol == null ? "" : cell(row[block.descriptionCol]),
+            gloss:
+              block.glossCol == null ? "" : cell(row[block.glossCol]),
           }));
 
     for (const candidate of candidates) {
       let label = candidate.label;
-      let description = candidate.description;
+      let gloss = candidate.gloss;
 
-      if (!label && !description) continue;
+      if (!label && !gloss) continue;
       if (!label) {
         // English-only cell: use the gloss as the label so the sense is usable.
-        label = description;
-        description = "";
+        label = gloss;
+        gloss = "";
       }
       if (!label) continue;
 
@@ -293,10 +293,10 @@ function parseSheet(
         });
         continue;
       }
-      if (description.length > MAX_DESCRIPTION_LENGTH) {
+      if (gloss.length > MAX_GLOSS_LENGTH) {
         errors.push({
           rowNumber: rowIndex + 1,
-          message: `Sense description exceeds ${MAX_DESCRIPTION_LENGTH} characters`,
+          message: `Sense gloss exceeds ${MAX_GLOSS_LENGTH} characters`,
         });
         continue;
       }
@@ -312,7 +312,7 @@ function parseSheet(
         rowNumber: rowIndex + 1,
         word,
         senseLabel: label,
-        description: description || null,
+        gloss: gloss || null,
       });
     }
   }

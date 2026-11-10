@@ -440,6 +440,8 @@ model wsd_sense {
   updated_by     String           @db.VarChar(255)
   version        BigInt?
   description    String?
+  gloss          String?
+  examples       String?
   sense_label    String           @db.VarChar(200)
   word           String           @db.VarChar(200)
   workspace_id   String           @db.Uuid
@@ -447,4 +449,18 @@ model wsd_sense {
   workspaces     Workspace        @relation(fields: [workspace_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_wsd_sense_workspace")
 
   @@index([workspace_id, word], map: "idx_wsd_sense_workspace_word")
+}
+
+/// Added by V9 (apps/api/db/migrations): an annotator's persisted "this sense does not fit here".
+model wsd_sense_rejection {
+  id           String   @id @db.Uuid
+  workspace_id String   @db.Uuid
+  document_id  String   @db.Uuid
+  token_id     String   @db.Uuid
+  sense_id     String   @db.Uuid
+  annotator_id String   @db.VarChar(100)
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([token_id, sense_id, annotator_id], map: "uq_wsd_rejection")
+  @@index([workspace_id, document_id, annotator_id], map: "idx_wsd_rejection_ws_doc_annotator")
 }

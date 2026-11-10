@@ -263,26 +263,27 @@ test("API smoke: auth, workspace, document, notifications, cascade delete", asyn
       };
 
       const imported = await call<{
-        created: number;
-        words: number;
-        skippedDuplicates: number;
+        inserted: number;
+        skipped: number;
+        updated: number;
+        totalProcessed: number;
       }>(
-        `/api/workspaces/${wsdWorkspaceId}/wsd/senses/import`,
+        `/api/workspaces/${wsdWorkspaceId}/wsd/import`,
         { method: "POST", body: makeForm() },
         ownerToken,
       );
       assert.equal(imported.res.status, 200);
-      assert.equal(imported.body.data.created, 2);
-      assert.equal(imported.body.data.words, 1);
+      assert.equal(imported.body.data.inserted, 2);
+      assert.equal(imported.body.data.totalProcessed, 2);
 
-      const reimported = await call<{ created: number; skippedDuplicates: number }>(
-        `/api/workspaces/${wsdWorkspaceId}/wsd/senses/import`,
+      const reimported = await call<{ inserted: number; skipped: number }>(
+        `/api/workspaces/${wsdWorkspaceId}/wsd/import`,
         { method: "POST", body: makeForm() },
         ownerToken,
       );
       assert.equal(reimported.res.status, 200);
-      assert.equal(reimported.body.data.created, 0);
-      assert.equal(reimported.body.data.skippedDuplicates, 2);
+      assert.equal(reimported.body.data.inserted, 0);
+      assert.equal(reimported.body.data.skipped, 2);
 
       const badForm = new FormData();
       badForm.append(
@@ -356,22 +357,38 @@ test("API smoke: auth, workspace, document, notifications, cascade delete", asyn
       }
       assert.ok(wsdTokenId, "WSD document did not tokenize in time");
 
-      const annotated = await call<{
-        sense: { word: string; senseLabel: string };
-        annotation: { tokenId: string; senseLabel: string };
+      const createdSense = await call<{
+        id: string;
+        word: string;
+        senseLabel: string;
+        gloss: string | null;
       }>(
-        `/api/workspaces/${wsdWorkspaceId}/wsd/annotations/with-sense`,
+        `/api/workspaces/${wsdWorkspaceId}/wsd/senses`,
+        jsonBody({
+          word: "John",
+          senseLabel: "জন",
+          gloss: "a name",
+        }),
+        ownerToken,
+      );
+      assert.equal(createdSense.res.status, 200);
+      assert.equal(createdSense.body.data.word, "John");
+      assert.equal(createdSense.body.data.senseLabel, "জন");
+      assert.equal(createdSense.body.data.gloss, "a name");
+
+      const annotated = await call<{
+        tokenId: string;
+        senseLabel: string;
+      }>(
+        `/api/workspaces/${wsdWorkspaceId}/wsd/annotations`,
         jsonBody({
           tokenId: wsdTokenId,
-          senseLabel: "জন",
-          description: "a name",
+          senseId: createdSense.body.data.id,
         }),
         ownerToken,
       );
       assert.equal(annotated.res.status, 200);
-      assert.equal(annotated.body.data.sense.word, "John");
-      assert.equal(annotated.body.data.sense.senseLabel, "জন");
-      assert.equal(annotated.body.data.annotation.senseLabel, "জন");
+      assert.equal(annotated.body.data.senseLabel, "জন");
 
       // WSD progress must move from 0 once an ambiguous token is tagged.
       const wsdDocs = await call<
@@ -405,11 +422,11 @@ test("API smoke: auth, workspace, document, notifications, cascade delete", asyn
       assert.match(annotationCsv, /জন/);
 
       const senseExport = await app.request(
-        `/api/workspaces/${wsdWorkspaceId}/wsd/export/senses?format=xlsx`,
+        `/api/workspaces/${wsdWorkspaceId}/wsd/senses/export?format=csv`,
         { headers: { Authorization: `Bearer ${ownerToken}` } },
       );
       assert.equal(senseExport.status, 200);
-      assert.ok((await senseExport.arrayBuffer()).byteLength > 1000);
+      assert.ok((await senseExport.text()).includes("John"));
     });
 
     await t.test("NER annotations reject undefined labels and invalid spans", async () => {

@@ -1,13 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as XLSX from "xlsx";
-import {
-  parseSenseWorkbook,
-} from "../src/services/wsd-sense-import.service.js";
-import {
-  buildAnnotationExport,
-  buildSenseInventoryExport,
-} from "../src/services/wsd-export.service.js";
+import { parseSenseWorkbook } from "../src/services/wsd-sense-import.service.js";
+import { parseSenseImportContent } from "../src/services/wsd-importer.service.js";
+import { buildAnnotationExport } from "../src/services/wsd-export.service.js";
 
 function templateWorkbook(): Uint8Array {
   const table: unknown[][] = [
@@ -52,16 +48,16 @@ test("parseSenseWorkbook reads the template layout", () => {
     rowNumber: 3,
     word: "অংক",
     senseLabel: "গণিত",
-    description: "Mathematics",
+    gloss: "Mathematics",
   });
   assert.deepEqual(parsed.rows[1], {
     rowNumber: 3,
     word: "অংক",
     senseLabel: "চিন",
-    description: "a mark",
+    gloss: "a mark",
   });
   assert.equal(parsed.rows[2]?.word, "জাল");
-  assert.equal(parsed.rows[2]?.description, "fishing net");
+  assert.equal(parsed.rows[2]?.gloss, "fishing net");
 });
 
 test("parseSenseWorkbook reads a legacy .xls (BIFF8) workbook", () => {
@@ -80,11 +76,20 @@ test("parseSenseWorkbook reads a legacy .xls (BIFF8) workbook", () => {
   assert.equal(parsed.rows.length, 1);
   assert.equal(parsed.rows[0]?.word, "অংক");
   assert.equal(parsed.rows[0]?.senseLabel, "গণিত");
-  assert.equal(parsed.rows[0]?.description, "Mathematics");
+  assert.equal(parsed.rows[0]?.gloss, "Mathematics");
+});
+
+test("parseSenseImportContent accepts a binary .xls upload", () => {
+  const entries = parseSenseImportContent(templateWorkbook(), "words.xlsx");
+  assert.equal(entries.length, 3);
+  assert.equal(entries[0]?.word, "অংক");
+  assert.equal(entries[0]?.senseLabel, "গণিত");
+  assert.equal(entries[0]?.gloss, "Mathematics");
 });
 
 test("parseSenseWorkbook reads a flat CSV with a BOM", () => {
-  const csv = "\uFEFFword,sense_label,description\r\nঅংক,গণিত,Mathematics\r\nঅংক,চিন,a mark\r\n";
+  const csv =
+    "\uFEFFword,sense_label,gloss\r\nঅংক,গণিত,Mathematics\r\nঅংক,চিন,a mark\r\n";
   const parsed = parseSenseWorkbook(
     new TextEncoder().encode(csv),
     "words.csv",
@@ -92,7 +97,7 @@ test("parseSenseWorkbook reads a flat CSV with a BOM", () => {
   assert.equal(parsed.rows.length, 2);
   assert.equal(parsed.rows[0]?.word, "অংক");
   assert.equal(parsed.rows[0]?.senseLabel, "গণিত");
-  assert.equal(parsed.rows[1]?.description, "a mark");
+  assert.equal(parsed.rows[1]?.gloss, "a mark");
 });
 
 test("parseSenseWorkbook rejects an unrecognized layout", () => {
@@ -108,34 +113,6 @@ test("parseSenseWorkbook rejects an unrecognized layout", () => {
   );
 });
 
-test("buildSenseInventoryExport round-trips the template shape", () => {
-  const file = buildSenseInventoryExport(
-    [
-      { word: "অংক", senseLabel: "গণিত", description: "Mathematics" },
-      { word: "অংক", senseLabel: "চিন", description: "a mark" },
-      { word: "জাল", senseLabel: "মাছ ধৰা সঁজুলি", description: "fishing net" },
-    ],
-    "xlsx",
-    "workspace-id",
-  );
-
-  assert.equal(file.contentType.includes("spreadsheetml"), true);
-  const workbook = XLSX.read(file.body as Uint8Array, { type: "array" });
-  const sheet = workbook.Sheets[workbook.SheetNames[0] ?? ""];
-  assert.ok(sheet);
-  const table = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-    header: 1,
-    defval: "",
-  });
-  assert.equal(table[0]?.[1], "Assamese Ambiguous Words");
-  assert.equal(table[0]?.[2], "Sense1");
-  assert.equal(table[2]?.[1], "অংক");
-
-  // The exported workbook must be importable again.
-  const parsed = parseSenseWorkbook(file.body as Uint8Array, "roundtrip.xlsx");
-  assert.equal(parsed.rows.length, 3);
-});
-
 test("buildAnnotationExport emits one row per annotation with a BOM", () => {
   const file = buildAnnotationExport(
     [
@@ -149,7 +126,8 @@ test("buildAnnotationExport emits one row per annotation with a BOM", () => {
         sentenceText: "এই অংকটো কঠিন",
         senseId: "sense-1",
         senseLabel: "গণিত",
-        senseDescription: "Mathematics",
+        senseGloss: "Mathematics",
+        senseExamples: "এই অংকটো কঠিন",
         annotatorId: "user-1",
         annotatorName: "Smoke Annotator",
         timestamp: "2026-11-10T00:00:00.000Z",
@@ -165,6 +143,7 @@ test("buildAnnotationExport emits one row per annotation with a BOM", () => {
   assert.match(text, /corpus\.txt/);
   assert.match(text, /sense-1/);
   assert.match(text, /গণিত/);
+  assert.match(text, /Mathematics/);
   assert.match(text, /Smoke Annotator/);
   assert.match(text, /2026-11-10T00:00:00.000Z/);
 });

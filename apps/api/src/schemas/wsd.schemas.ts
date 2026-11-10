@@ -3,7 +3,8 @@ import { z } from "zod";
 export const createSenseSchema = z.object({
   word: z.string().trim().min(1).max(200),
   senseLabel: z.string().trim().min(1).max(200),
-  description: z.string().trim().max(2000).nullish(),
+  gloss: z.string().trim().max(4000).nullish(),
+  examples: z.string().trim().max(4000).nullish(),
 });
 
 export type CreateSenseInput = z.infer<typeof createSenseSchema>;
@@ -14,28 +15,31 @@ export const createWsdAnnotationSchema = z.object({
   documentId: z.string().uuid().nullish(),
 });
 
-export type CreateWsdAnnotationInput = z.infer<typeof createWsdAnnotationSchema>;
-
-/**
- * Inline sense creation from the editor. The word is derived from the token
- * server-side, so the client only supplies the sense text.
- */
-export const createSenseWithAnnotationSchema = z.object({
+export const rejectSenseSchema = z.object({
   tokenId: z.string().uuid(),
-  senseLabel: z.string().trim().min(1).max(200),
-  description: z.string().trim().max(2000).nullish(),
+  senseId: z.string().uuid(),
 });
 
-export type CreateSenseWithAnnotationInput = z.infer<
-  typeof createSenseWithAnnotationSchema
->;
+export type RejectSenseInput = z.infer<typeof rejectSenseSchema>;
+
+export type CreateWsdAnnotationInput = z.infer<typeof createWsdAnnotationSchema>;
+
+export const matchWordsSchema = z.object({
+  forms: z.array(z.string().min(1).max(200)).max(5000),
+});
+
+export interface AmbiguousWordMatchDto {
+  word: string;
+  senseCount: number;
+}
 
 export interface WsdSenseDto {
   id: string;
   workspaceId: string;
   word: string;
   senseLabel: string;
-  description: string | null;
+  gloss: string | null;
+  examples: string | null;
 }
 
 export interface WsdAnnotationDto {
@@ -43,6 +47,9 @@ export interface WsdAnnotationDto {
   tokenId: string;
   senseId: string;
   senseLabel?: string | null;
+  /** Document-level fetch only: the annotated token's surface form and sentence, for the editor's work log. */
+  tokenForm?: string | null;
+  sentenceIndex?: number | null;
   annotatorId: string;
   workspaceId: string;
   timestamp: string;

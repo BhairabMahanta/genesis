@@ -3,13 +3,11 @@ import { ACCESS_COOKIE } from '@/server/http';
 import { SERVER_API_BASE_URL } from '@/config/env';
 
 /**
- * Proxies WSD sense/annotation exports from the API to the browser.
- * Server actions cannot stream binary, so downloads live in a route handler.
- * Middleware refreshes the access cookie before this runs (`/api/wsd` is in
- * the protected prefix list).
+ * Proxies the WSD annotated-occurrence export from the API. Server actions
+ * cannot stream binary, so downloads live in a route handler. Middleware
+ * refreshes the access cookie before this runs (`/api/wsd` is protected).
  */
 
-const EXPORT_KINDS = new Set(['senses', 'annotations']);
 const FORMATS = new Set(['csv', 'xlsx']);
 
 export async function GET(
@@ -17,7 +15,7 @@ export async function GET(
   { params }: { params: Promise<{ workspaceId: string; kind: string }> },
 ) {
   const { workspaceId, kind } = await params;
-  if (!EXPORT_KINDS.has(kind)) {
+  if (kind !== 'annotations') {
     return new Response('Not found', { status: 404 });
   }
 
@@ -33,7 +31,7 @@ export async function GET(
   }
 
   const upstream = await fetch(
-    `${SERVER_API_BASE_URL}/api/workspaces/${workspaceId}/wsd/export/${kind}?format=${format}`,
+    `${SERVER_API_BASE_URL}/api/workspaces/${workspaceId}/wsd/export/annotations?format=${format}`,
     {
       headers: { Authorization: `Bearer ${accessToken}` },
     },

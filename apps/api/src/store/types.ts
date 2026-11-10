@@ -185,7 +185,8 @@ export interface WsdSenseEntity {
   workspaceId: string;
   word: string;
   senseLabel: string;
-  description: string | null;
+  gloss: string | null;
+  examples: string | null;
   createdAt: string;
 }
 
@@ -215,7 +216,8 @@ export interface WsdAnnotationDetailEntity {
   sentenceText: string;
   senseId: string;
   senseLabel: string;
-  senseDescription: string | null;
+  senseGloss: string | null;
+  senseExamples: string | null;
   annotatorId: string;
   annotatorName: string;
   timestamp: string;

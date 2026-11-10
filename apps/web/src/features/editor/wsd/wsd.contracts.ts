@@ -3,13 +3,21 @@ export interface WsdSense {
     workspaceId: string;
     word: string;
     senseLabel: string;
-    description: string | null;
+    gloss: string | null;
+    examples: string | null;
 }
 
 export interface CreateWsdSenseRequest {
     word: string;
     senseLabel: string;
-    description?: string | null;
+    gloss?: string | null;
+    examples?: string | null;
+}
+
+/** An annotator's persisted ✗: this sense does not fit this token. */
+export interface WsdRejection {
+    tokenId: string;
+    senseId: string;
 }
 
 export interface WsdAnnotation {
@@ -18,34 +26,38 @@ export interface WsdAnnotation {
     senseId: string;
     /** Resolved sense label; populated by the document-level fetch, may be absent on per-token fetches. */
     senseLabel?: string | null;
+    /** Document-level fetch only: surface form and sentence of the annotated token. */
+    tokenForm?: string | null;
+    sentenceIndex?: number | null;
     annotatorId: string;
     workspaceId: string;
     timestamp: string;
 }
 
-export interface WsdSenseImportRowError {
-    rowNumber: number;
-    message: string;
+export interface PaginatedSenses {
+    items: WsdSense[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
 }
 
-export interface WsdSenseImportSummary {
-    sheetName: string;
-    words: number;
-    sensesInFile: number;
-    created: number;
-    skippedDuplicates: number;
-    skippedInvalid: number;
-    duplicatesInFile: number;
-    errors: WsdSenseImportRowError[];
+export interface SenseSearchParams {
+    word?: string;
+    query?: string;
+    page?: number;
+    limit?: number;
 }
 
-export interface CreateSenseWithAnnotationRequest {
-    tokenId: string;
-    senseLabel: string;
-    description?: string | null;
+export interface ImportSensesResult {
+    totalProcessed: number;
+    inserted: number;
+    skipped: number;
+    updated: number;
 }
 
-export interface WsdSenseWithAnnotation {
-    sense: WsdSense;
-    annotation: WsdAnnotation;
+/** A word of the workspace's ambiguous-word list found among a set of token forms. */
+export interface AmbiguousWordMatch {
+    word: string;
+    senseCount: number;
 }

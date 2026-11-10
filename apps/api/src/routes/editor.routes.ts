@@ -122,6 +122,8 @@ editorRoutes.post("/editor/documents/:documentId/tokenize", async (c) => {
     await updateDocumentEntity(documentId, {
       processingStatus: "COMPLETED",
       processingError: null,
+      // New tokens cascade away POS/WSD annotations, so old coverage is stale.
+      progress: 0,
     });
   } catch (err) {
     await updateDocumentEntity(documentId, {

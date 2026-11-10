@@ -453,7 +453,7 @@ users
 | `ner_annotations` | NER spans | document_id, start/end_token_index, label, annotator_id |
 | `pos_tag_definitions` | Built-in/custom POS tags | tag, scope, workspace_id |
 | `pos_annotations` | One POS vote per token per annotator | token_id, document_id, annotator_id, pos_tag (unique: token+annotator) |
-| `wsd_sense` | Workspace sense inventory | workspace_id, word, sense_label, description |
+| `wsd_sense` | Workspace sense inventory | workspace_id, word, sense_label, gloss, examples |
 | `wsd_annotation` | One sense vote per token per annotator | token_id, sense_id, document_id, annotator_id (unique: token+annotator) |
 | `dismissed_recommendations` | Per-user hidden suggestions | user_id, recommendation_hash, accepted (unique: user+hash) |
 | `editor_sessions` | Resume position | workspace_id, user_id, last_document_index, scroll_position (unique: workspace+user) |
@@ -935,19 +935,22 @@ Custom tag rules are the same as NER: uppercase pattern, no built-in conflict, u
 
 | Method | Path | Access |
 |---|---|---|
-| `GET` | `/api/workspaces/:id/wsd/senses?word=` | Member |
-| `POST` | `/api/workspaces/:id/wsd/senses` | Admin |
-| `POST` | `/api/workspaces/:id/wsd/senses/import` | Admin; multipart `.xls`/`.xlsx`/`.xlsm`/`.csv` |
+| `GET` | `/api/workspaces/:id/wsd/senses?word=&query=&page=&limit=` | Member; paginated search when query/page/limit is present |
+| `POST` | `/api/workspaces/:id/wsd/senses` | Member; create a sense |
+| `POST` | `/api/workspaces/:id/wsd/import` | Admin; multipart `.xls`/`.xlsx`/`.xlsm`/`.json`/`.jsonl`/`.csv`/`.tsv` |
+| `POST` | `/api/workspaces/:id/wsd/words/match` | Member; check token forms against the list |
 | `PUT` | `/api/workspaces/:id/wsd/senses/:senseId` | Admin |
 | `DELETE` | `/api/workspaces/:id/wsd/senses/:senseId` | Admin |
+| `GET` | `/api/workspaces/:id/wsd/senses/export?format=jsonl\|csv` | Member; dictionary export |
 | `POST` | `/api/workspaces/:id/wsd/annotations` | Member |
-| `POST` | `/api/workspaces/:id/wsd/annotations/with-sense` | Member; create/reuse a sense and tag the token |
+| `POST` | `/api/workspaces/:id/wsd/rejections` | Member; persist ✗ for a token/sense |
+| `DELETE` | `/api/workspaces/:id/wsd/rejections/:tokenId/:senseId` | Member |
+| `GET` | `/api/workspaces/:id/wsd/documents/:documentId/rejections` | Member |
 | `GET` | `/api/workspaces/:id/wsd/tokens/:tokenId/annotations` | Member |
 | `GET` | `/api/workspaces/:id/wsd/documents/:documentId/annotations` | Member |
 | `DELETE` | `/api/workspaces/:id/wsd/annotations/:annotationId` | Member |
 | `GET` | `/api/workspaces/:id/wsd/export` | Member; TSV download |
 | `GET` | `/api/workspaces/:id/wsd/export/consensus` | Member; TSV download |
-| `GET` | `/api/workspaces/:id/wsd/export/senses?format=csv\|xlsx` | Member; inventory export |
 | `GET` | `/api/workspaces/:id/wsd/export/annotations?format=csv\|xlsx` | Member; occurrence export |
 | `GET` | `/api/workspaces/:id/wsd/annotations/:tokenId` | Alias for token annotations |
 | `POST` | `/api/workspaces/:id/wsd/annotate` | Alias for annotation create |
@@ -955,46 +958,55 @@ Custom tag rules are the same as NER: uppercase pattern, no built-in conflict, u
 **Sense inventory**
 
 - A sense belongs to one workspace.
-- `word` and `senseLabel` are required.
+- `word`, `senseLabel`, `gloss` and `examples` are stored separately.
 - Duplicate `(word, senseLabel)` is rejected case-insensitively by the service.
-- `?word=` filters case-insensitively.
+- `?word=` filters case-insensitively. `query`/`page`/`limit` switch to the
+  paginated search used by the editor's dictionary pane.
+- Any member can create a sense (annotators hit words the dictionary lacks);
+  edit, delete and bulk import stay admin-only.
 - Deleting a sense cascades its annotations.
 
-**Excel import**
+**Import**
 
-`POST /wsd/senses/import` accepts the original template (row 1:
-`Sl No | Assamese Ambiguous Words | Sense1..SenseN | Number of Total Senses`,
-row 2: `Assamese`/`English` per sense pair) or a flat table
-(`word,sense_label,description`). The importer picks the first sheet with a
-recognized header, ignores helper sheets, maps the Assamese sense to
-`senseLabel` and the English gloss to `description`, and skips existing
-`(word, senseLabel)` pairs. Re-importing the same file is idempotent.
+`POST /wsd/import` accepts either `multipart/form-data` (field `file`) or a JSON
+array/`{ entries: [...] }`. Binary Excel templates (`.xls`/`.xlsx`/`.xlsm`) use
+the original layout:
+
+```text
+Sl No | Assamese Ambiguous Words | Sense1 Assamese | Sense1 English | ...
+```
+
+The parser picks the first sheet with a recognized header, ignores helper
+sheets, maps the Assamese sense to `senseLabel` and the English text to `gloss`.
+Text imports support JSON, JSONL, CSV and TSV with `word`, `senseLabel`/`label`,
+`gloss`/`description`/`meaning`, and `examples` aliases. `mode=skip|overwrite`
+controls existing `(word, senseLabel)` pairs.
 
 **Growing the inventory from annotation**
 
-`POST /wsd/annotations/with-sense` is member-level: it derives the word from
-the token form, creates or reuses the sense, and upserts the annotator's vote
-in one request. This is how the inventory grows while annotating; the
-workspace admin still controls bulk import, edits, and deletion.
+`POST /wsd/senses` is member-level, so the editor can create a sense for a word
+the dictionary lacks and then confirm it for the token. Edit, delete and bulk
+import remain admin-only.
 
 **Document / workspace progress**
 
 For WSD, `documents.progress` is `annotated ambiguous tokens / all ambiguous tokens`,
 where a token is ambiguous when its exact form matches a workspace sense word. The
 count is distinct tokens, so multiple annotators on the same token do not inflate
-progress. It is recomputed on annotation create/delete and inline sense creation; the
-first annotation moves the document to `ANNOTATING`. A WSD workspace's
-`progressPercentage` is the average document coverage (complete documents count as 100%),
-and `annotatedDocumentCount` counts documents with progress > 0 or status `COMPLETE`.
+progress. It is recomputed on annotation create/delete, rejection that removes an
+annotation, and re-tokenization; the first annotation moves the document to
+`ANNOTATING`. A WSD workspace's `progressPercentage` is token-weighted coverage across
+all documents, with one decimal so the first few tags do not display as 0%.
+`annotatedDocumentCount` counts documents with progress > 0 or status `COMPLETE`.
 Other task types keep the original completed-document percentage.
 
 **Occurrence export**
 
 `GET /wsd/export/annotations` returns one row per annotation with document,
-sentence/token position, token form, sentence text, sense id/label/description,
-annotator id/display name and timestamp. `GET /wsd/export/senses` returns the
-inventory in the original template shape (XLSX) or a flat CSV. Both use UTF-8
-with a BOM when CSV so Assamese opens correctly in Excel.
+sentence/token position, token form, sentence text, sense id/label/gloss/examples,
+annotator id/display name and timestamp. CSV includes a UTF-8 BOM so Assamese opens
+correctly in Excel. `GET /wsd/senses/export` remains the re-importable dictionary
+export (JSONL/CSV).
 
 **Annotation**
 
