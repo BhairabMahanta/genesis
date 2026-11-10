@@ -18,6 +18,7 @@ import {
   findWsdAnnotation,
   findWsdSense,
   findWsdSenseByWordAndLabel,
+  listDocumentsByWorkspace,
   listWsdAnnotationDetails,
   listWsdAnnotationsForDocument,
   listWsdAnnotationsForToken,
@@ -135,6 +136,17 @@ export async function searchSenses(
 
 
 
+/**
+ * Document progress is stored, and its denominator is the workspace's
+ * ambiguous words, so any dictionary change makes every document's value stale.
+ * This also back-fills documents annotated before progress was tracked.
+ */
+async function refreshWorkspaceWsdProgress(workspaceId: string): Promise<void> {
+  for (const doc of await listDocumentsByWorkspace(workspaceId)) {
+    await onWsdAnnotationChanged(doc.id);
+  }
+}
+
 export async function importSenses(
   workspaceId: string,
   userId: string,
@@ -147,7 +159,9 @@ export async function importSenses(
       ? parseSenseImportContent(rawContentOrEntries, options.filename)
       : rawContentOrEntries.map(normalizeSenseEntry).filter((e) => Boolean(e.word));
 
-  return bulkInsertWsdSenses(workspaceId, entries, { mode: options.mode });
+  const result = await bulkInsertWsdSenses(workspaceId, entries, { mode: options.mode });
+  if (result.inserted > 0 || result.updated > 0) await refreshWorkspaceWsdProgress(workspaceId);
+  return result;
 }
 
 
@@ -171,7 +185,7 @@ export async function createSense(
   await requireMember(workspaceId, userId);
   const clash = await findWsdSenseByWordAndLabel(workspaceId, input.word, input.senseLabel);
   if (clash) throw new BadRequestException("A sense with this word and label already exists");
-  return toSenseDto(
+  const created = toSenseDto(
     await saveWsdSense({
       workspaceId,
       word: input.word,
@@ -180,6 +194,8 @@ export async function createSense(
       examples: input.examples ?? null,
     }),
   );
+  await refreshWorkspaceWsdProgress(workspaceId);
+  return created;
 }
 
 export async function updateSense(
@@ -202,6 +218,10 @@ export async function updateSense(
     examples: input.examples ?? null,
   });
   if (!updated) throw new NotFoundException("Sense not found");
+  // Only a changed headword changes which tokens count as ambiguous.
+  if (row.word.toLowerCase() !== input.word.toLowerCase()) {
+    await refreshWorkspaceWsdProgress(workspaceId);
+  }
   return toSenseDto(updated);
 }
 
@@ -218,6 +238,7 @@ export async function removeSense(
     throw new ConflictException(`This sense is used by ${inUse} annotations`);
   }
   await deleteWsdSense(senseId);
+  await refreshWorkspaceWsdProgress(workspaceId);
 }
 
 export async function annotate(

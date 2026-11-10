@@ -621,7 +621,7 @@ export function WorkspaceShell({
             )}
 
             {activeSection === 'lexicon' && workspace.annotationType === 'WSD' && (
-              <WsdLexicon workspaceId={workspaceId} isAdmin={isAdmin} />
+              <WsdLexicon workspaceId={workspaceId} isAdmin={isAdmin} onChanged={() => router.refresh()} />
             )}
 
             {activeSection === 'collaborators' && (

@@ -1575,39 +1575,33 @@ export interface WsdProgressStats {
 
 /**
  * Progress for a WSD document: annotated ambiguous tokens / all ambiguous
- * tokens. A token is ambiguous when its exact form matches a sense word in the
- * workspace. Counting distinct tokens means multiple annotators voting on the
- * same token do not inflate progress.
+ * tokens. A token is ambiguous when its form matches a sense word in the
+ * workspace (case-insensitive). Counting distinct tokens means multiple
+ * annotators voting on the same token do not inflate progress.
+ *
+ * The lexicon is joined inside PostgreSQL instead of being sent as a list of
+ * bind parameters: a Hemkosh-sized dictionary has far more headwords than the
+ * 32,767-parameter limit of a prepared statement.
  */
 export async function countWsdDocumentProgress(
   documentId: string,
 ): Promise<WsdProgressStats> {
-  const document = await prisma.document.findUnique({
-    where: { id: documentId },
-    select: { workspaceId: true },
-  });
-  if (!document) return { ambiguousTotal: 0, annotated: 0 };
-
-  const senses = await prisma.wsd_sense.findMany({
-    where: { workspace_id: document.workspaceId },
-    select: { word: true },
-  });
-  const words = [...new Set(senses.map((sense) => sense.word.toLowerCase()))];
-  if (words.length === 0) return { ambiguousTotal: 0, annotated: 0 };
-
   const rows = await prisma.$queryRaw<
     Array<{ ambiguous_total: number; annotated: number }>
   >(Prisma.sql`
     SELECT
-      COUNT(*) FILTER (WHERE lower(t.form) IN (${Prisma.join(words)}))::int
-        AS ambiguous_total,
+      COUNT(*) FILTER (WHERE m.w IS NOT NULL)::int AS ambiguous_total,
       COUNT(*) FILTER (
-        WHERE lower(t.form) IN (${Prisma.join(words)})
-          AND EXISTS (
-            SELECT 1 FROM wsd_annotation a WHERE a.token_id = t.id
-          )
+        WHERE m.w IS NOT NULL
+          AND EXISTS (SELECT 1 FROM wsd_annotation a WHERE a.token_id = t.id)
       )::int AS annotated
     FROM tokens t
+    LEFT JOIN (
+      SELECT DISTINCT lower(s.word) AS w
+      FROM wsd_sense s
+      JOIN documents d ON d.workspace_id = s.workspace_id
+      WHERE d.id = ${documentId}::uuid
+    ) m ON m.w = lower(t.form)
     WHERE t.document_id = ${documentId}::uuid
   `);
 
@@ -1625,27 +1619,22 @@ export async function countWsdDocumentProgress(
 export async function countWsdWorkspaceProgress(
   workspaceId: string,
 ): Promise<WsdProgressStats> {
-  const senses = await prisma.wsd_sense.findMany({
-    where: { workspace_id: workspaceId },
-    select: { word: true },
-  });
-  const words = [...new Set(senses.map((sense) => sense.word.toLowerCase()))];
-  if (words.length === 0) return { ambiguousTotal: 0, annotated: 0 };
-
   const rows = await prisma.$queryRaw<
     Array<{ ambiguous_total: number; annotated: number }>
   >(Prisma.sql`
     SELECT
-      COUNT(*) FILTER (WHERE lower(t.form) IN (${Prisma.join(words)}))::int
-        AS ambiguous_total,
+      COUNT(*) FILTER (WHERE m.w IS NOT NULL)::int AS ambiguous_total,
       COUNT(*) FILTER (
-        WHERE lower(t.form) IN (${Prisma.join(words)})
-          AND EXISTS (
-            SELECT 1 FROM wsd_annotation a WHERE a.token_id = t.id
-          )
+        WHERE m.w IS NOT NULL
+          AND EXISTS (SELECT 1 FROM wsd_annotation a WHERE a.token_id = t.id)
       )::int AS annotated
     FROM tokens t
     JOIN documents d ON d.id = t.document_id
+    LEFT JOIN (
+      SELECT DISTINCT lower(word) AS w
+      FROM wsd_sense
+      WHERE workspace_id = ${workspaceId}::uuid
+    ) m ON m.w = lower(t.form)
     WHERE d.workspace_id = ${workspaceId}::uuid
   `);
 

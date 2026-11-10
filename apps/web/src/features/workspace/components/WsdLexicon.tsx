@@ -19,6 +19,8 @@ import {
 interface WsdLexiconProps {
   workspaceId: string;
   isAdmin: boolean;
+  /** Called after the dictionary changes so the workspace's progress numbers can refresh. */
+  onChanged?: () => void;
 }
 
 /**
@@ -26,7 +28,7 @@ interface WsdLexiconProps {
  * sidebar it renders even when the workspace has no documents, and it owns the
  * Excel import / word-list + annotation exports.
  */
-export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
+export function WsdLexicon({ workspaceId, isAdmin, onChanged }: WsdLexiconProps) {
   const [senses, setSenses] = useState<WsdSense[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -130,6 +132,7 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
     setNewExamples('');
     setAdding(false);
     toast.success('Sense added to the inventory.');
+    onChanged?.();
   };
 
   const startEdit = (sense: WsdSense) => {
@@ -155,6 +158,7 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
     setSenses((prev) => prev.map((sense) => (sense.id === senseId ? result.data : sense)));
     setEditingId(null);
     toast.success('Sense updated.');
+    onChanged?.();
   };
 
   const handleDelete = async (senseId: string) => {
@@ -169,6 +173,7 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
     }
     setSenses((prev) => prev.filter((sense) => sense.id !== senseId));
     toast.success('Sense deleted.');
+    onChanged?.();
   };
 
   const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -191,6 +196,7 @@ export function WsdLexicon({ workspaceId, isAdmin }: WsdLexiconProps) {
       `Imported ${result.data.inserted} sense${result.data.inserted === 1 ? '' : 's'}.`,
     );
     await reload();
+    onChanged?.();
   };
 
   const downloadAnnotations = (format: 'csv' | 'xlsx') => {
