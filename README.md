@@ -2,6 +2,8 @@
 
 A full-stack, multi-task NLP annotation platform for coreference resolution, named-entity recognition (NER), part-of-speech tagging (POS), and word-sense disambiguation (WSD).
 
+> **Backend deep-dive:** see [**`apps/api/README.md`**](apps/api/README.md) for the full backend architecture, feature flows, matching logic, and frontend integration walkthrough.
+
 ## Monorepo architecture
 
 ```text

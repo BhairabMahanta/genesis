@@ -2,6 +2,8 @@
 
 This guide runs the real stack: PostgreSQL + the TypeScript API (`apps/api`) + the Next.js frontend (`apps/web`). There is no mock data or offline frontend mode — the UI always talks to the API.
 
+> For backend architecture, feature flows, matching logic, and the frontend integration walkthrough, see [**`apps/api/README.md`**](apps/api/README.md).
+
 Both PowerShell and POSIX-style commands are shown where they differ. Examples use the default PostgreSQL superuser (`postgres` / `postgres`); change the credentials if your installation differs.
 
 ---
