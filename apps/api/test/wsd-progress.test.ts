@@ -119,6 +119,27 @@ test("WSD progress follows dictionary changes and survives a huge dictionary", a
       assert.ok(Math.abs((after.document ?? 0) - 1 / 3) < 1e-9, `document progress was ${after.document}`);
     });
 
+    await t.test("annotated overview lists per-word coverage and every annotation", async () => {
+      const overview = await call<{
+        dictionaryWords: number;
+        words: Array<{ word: string; occurrences: number; tagged: number }>;
+        annotations: Array<{ word: string; senseLabel: string; documentName: string; sentenceIndex: number; sentenceText: string; annotatorName: string }>;
+      }>(`${base}/wsd/annotated`, {}, token);
+      assert.equal(overview.res.status, 200);
+      assert.equal(overview.body.data.dictionaryWords, 2);
+      const byWord = new Map(overview.body.data.words.map((w) => [w.word, w]));
+      assert.deepEqual(byWord.get("কাল"), { word: "কাল", occurrences: 1, tagged: 1 });
+      assert.deepEqual(byWord.get("ভাত"), { word: "ভাত", occurrences: 2, tagged: 0 });
+      assert.equal(overview.body.data.annotations.length, 1);
+      const [only] = overview.body.data.annotations;
+      assert.equal(only!.word, "কাল");
+      assert.equal(only!.senseLabel, "সময়");
+      assert.equal(only!.documentName, "progress.txt");
+      assert.equal(only!.sentenceIndex, 0);
+      assert.ok(only!.sentenceText.includes("কাল"), "sentence context is included");
+      assert.equal(only!.annotatorName, "Prog Test");
+    });
+
     await t.test("removing a word from the dictionary re-bases progress again", async () => {
       const senses = await call<Array<{ id: string }>>(`${base}/wsd/senses?word=${encodeURIComponent("ভাত")}`, {}, token);
       const removed = await call(`${base}/wsd/senses/${senses.body.data[0]!.id}`, { method: "DELETE" }, token);
@@ -139,6 +160,10 @@ test("WSD progress follows dictionary changes and survives a huge dictionary", a
       const list = await call("/api/workspaces", {}, token);
       assert.equal(list.res.status, 200);
       assert.deepEqual(await snapshot(), { workspace: 100, document: 1 });
+      const overview = await call<{ dictionaryWords: number; words: Array<{ word: string }> }>(`${base}/wsd/annotated`, {}, token);
+      assert.equal(overview.res.status, 200);
+      assert.equal(overview.body.data.dictionaryWords, 20001);
+      assert.deepEqual(overview.body.data.words.map((w) => w.word), ["কাল"], "only words that occur in the text are listed");
     });
   } finally {
     if (workspaceId && token) {

@@ -45,6 +45,7 @@ import { Sidebar, SidebarItem } from './Sidebar';
 import { DocumentGrid, DocumentFilter } from './DocumentGrid';
 import { MemberManagement } from './MemberManagement';
 import { WsdLexicon } from './WsdLexicon';
+import { WsdAnnotatedWords } from './WsdAnnotatedWords';
 import { ExportDialog } from './ExportDialog';
 import { toast } from 'sonner';
 
@@ -622,6 +623,13 @@ export function WorkspaceShell({
 
             {activeSection === 'lexicon' && workspace.annotationType === 'WSD' && (
               <WsdLexicon workspaceId={workspaceId} isAdmin={isAdmin} onChanged={() => router.refresh()} />
+            )}
+
+            {activeSection === 'annotated' && workspace.annotationType === 'WSD' && (
+              <WsdAnnotatedWords
+                workspaceId={workspaceId}
+                onAnnotate={() => router.push(`/workspace/${workspaceId}/editor`)}
+              />
             )}
 
             {activeSection === 'collaborators' && (

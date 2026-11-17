@@ -3,6 +3,7 @@
 import { type ActionResult, toActionError } from '@/server/contracts/common';
 import type {
   AmbiguousWordMatch,
+  WsdAnnotatedOverview,
   CreateWsdSenseRequest,
   ImportSensesResult,
   PaginatedSenses,
@@ -15,6 +16,7 @@ import {
   createSense,
   deleteAnnotation,
   deleteSense,
+  getAnnotatedOverview,
   getAnnotationsForDocument,
   getAnnotationsForToken,
   importSenses,
@@ -197,5 +199,16 @@ export async function unrejectSenseAction(
     return { ok: true, data: undefined };
   } catch (err) {
     return toActionError(err, 'Failed to undo rejection.');
+  }
+}
+
+export async function getAnnotatedOverviewAction(
+  workspaceId: string,
+): Promise<ActionResult<WsdAnnotatedOverview>> {
+  try {
+    const data = await getAnnotatedOverview(workspaceId);
+    return { ok: true, data };
+  } catch (err) {
+    return toActionError(err, 'Failed to load annotated words.');
   }
 }

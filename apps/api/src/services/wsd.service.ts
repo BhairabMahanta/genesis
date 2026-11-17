@@ -20,6 +20,8 @@ import {
   findWsdSenseByWordAndLabel,
   listDocumentsByWorkspace,
   listWsdAnnotationDetails,
+  countWsdDictionaryWords,
+  countWsdWordOccurrences,
   listWsdAnnotationsForDocument,
   listWsdAnnotationsForToken,
   listWsdByWorkspace,
@@ -465,6 +467,27 @@ export async function exportAnnotatedOccurrences(
     parsedFormat,
     workspaceId,
   );
+}
+
+/**
+ * Everything the "Annotated Words" page shows: per-word coverage of the text and
+ * every annotation with its document, sentence, sense and annotator.
+ */
+export async function annotatedOverview(workspaceId: string, userId: string) {
+  await requireMember(workspaceId, userId);
+  const [dictionaryWords, words, annotations] = await Promise.all([
+    countWsdDictionaryWords(workspaceId),
+    countWsdWordOccurrences(workspaceId),
+    listWsdAnnotationDetails(workspaceId),
+  ]);
+  annotations.sort(
+    (a, b) =>
+      a.documentName.localeCompare(b.documentName) ||
+      a.sentenceIndex - b.sentenceIndex ||
+      a.tokenIndex - b.tokenIndex ||
+      a.annotatorName.localeCompare(b.annotatorName),
+  );
+  return { dictionaryWords, words, annotations };
 }
 
 /** Replace tab/newline in TSV cells so the output stays parseable. */
