@@ -15,7 +15,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { useRouter } from 'next/navigation';
 
 export function NotificationDropdown() {
-    const { notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification } = useNotifications();
+    const { notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification, refreshNotifications } =
+        useNotifications();
     const router = useRouter();
 
     const handleNotificationClick = async (id: string, link?: string) => {
@@ -26,7 +27,7 @@ export function NotificationDropdown() {
     };
 
     return (
-        <DropdownMenu>
+        <DropdownMenu onOpenChange={open => { if (open) refreshNotifications(); }}>
             <DropdownMenuTrigger asChild>
                 <Button
                     variant="ghost"

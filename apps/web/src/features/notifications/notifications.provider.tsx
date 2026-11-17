@@ -1,6 +1,7 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import { toast } from 'sonner';
 import { Client, IMessage } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
 import { Notification } from '@/features/notifications/notifications.contracts';
@@ -23,6 +24,8 @@ interface NotificationContextType {
     markAsRead: (id: string) => Promise<void>;
     markAllAsRead: () => Promise<void>;
     deleteNotification: (id: string) => Promise<void>;
+    /** Re-read the list from the server (the panel calls this when it opens). */
+    refreshNotifications: () => Promise<Notification[] | null>;
 }
 
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
@@ -30,26 +33,49 @@ const NotificationContext = createContext<NotificationContextType | undefined>(u
 export function NotificationProvider({ children }: { children: React.ReactNode }) {
     const { user, isAuthenticated } = useAuth();
     const [notifications, setNotifications] = useState<Notification[]>([]);
-    const [unreadCount, setUnreadCount] = useState(0);
     const [stompClient, setStompClient] = useState<Client | null>(null);
     const [showNotification, setShowNotification] = useState(false);
 
-    // Fetch initial notifications
-    const refreshNotifications = useCallback(async () => {
-        if (!isAuthenticated) return;
+    // Derived from the list so the badge can never drift from what is shown.
+    const unreadCount = useMemo(() => notifications.filter(n => !n.read).length, [notifications]);
+
+    // The server is the source of truth: other tabs, devices or a long-open page
+    // change notifications behind this one, so re-read instead of trusting local state.
+    const refreshNotifications = useCallback(async (): Promise<Notification[] | null> => {
+        if (!isAuthenticated) return null;
         const result = await listNotificationsAction();
         if (!result.ok) {
             console.error('Failed to fetch notifications', result.error);
-            return;
+            return null;
         }
         const data = result.data || [];
         setNotifications(data);
-        setUnreadCount(data.filter(n => !n.read).length);
+        return data;
     }, [isAuthenticated]);
 
     useEffect(() => {
         refreshNotifications();
+        // Coming back to the tab picks up changes made elsewhere.
+        const onFocus = () => {
+            if (document.visibilityState === 'visible') refreshNotifications();
+        };
+        window.addEventListener('focus', onFocus);
+        document.addEventListener('visibilitychange', onFocus);
+        return () => {
+            window.removeEventListener('focus', onFocus);
+            document.removeEventListener('visibilitychange', onFocus);
+        };
     }, [refreshNotifications]);
+
+    // A failed per-item action usually means the item was already changed or
+    // deleted elsewhere: resync, and only report it if the item is still there.
+    const resyncAfterFailure = useCallback(
+        async (id: string, message: string) => {
+            const fresh = await refreshNotifications();
+            if (fresh?.some(n => n.id === id)) toast.error(message);
+        },
+        [refreshNotifications],
+    );
 
     // WebSocket Connection
     useEffect(() => {
@@ -92,8 +118,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
                     client?.subscribe(`/user/queue/notifications`, (message: IMessage) => {
                         try {
                             const notification: Notification = JSON.parse(message.body);
-                            setNotifications(prev => [notification, ...prev]);
-                            setUnreadCount(prev => prev + 1);
+                            // Ignore a push for an item the list already has.
+                            setNotifications(prev =>
+                                prev.some(n => n.id === notification.id) ? prev : [notification, ...prev],
+                            );
                         } catch (e) {
                             console.error('Failed to parse notification', e);
                         }
@@ -124,40 +152,30 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     const markAsRead = async (id: string) => {
         const result = await markNotificationAsReadAction(id);
         if (!result.ok) {
-            console.error('Failed to mark notification as read', result.error);
+            await resyncAfterFailure(id, result.error || 'Could not mark the notification as read.');
             return;
         }
-        setNotifications(prev => {
-            const updated = prev.map(n => n.id === id ? { ...n, read: true } : n);
-            setUnreadCount(updated.filter(n => !n.read).length);
-            return updated;
-        });
+        setNotifications(prev => prev.map(n => (n.id === id ? { ...n, read: true } : n)));
     };
 
     const markAllAsRead = async () => {
         const result = await markAllNotificationsAsReadAction();
         if (!result.ok) {
-            console.error('Failed to mark all as read', result.error);
+            toast.error(result.error || 'Could not mark all notifications as read.');
             return;
         }
-        setNotifications(prev => {
-            const updated = prev.map(n => ({ ...n, read: true }));
-            setUnreadCount(0);
-            return updated;
-        });
+        setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+        // Also pick up anything that arrived or was removed elsewhere meanwhile.
+        await refreshNotifications();
     };
 
     const deleteNotification = async (id: string) => {
         const result = await deleteNotificationAction(id);
         if (!result.ok) {
-            console.error('Failed to delete notification', result.error);
+            await resyncAfterFailure(id, result.error || 'Could not delete the notification.');
             return;
         }
-        setNotifications(prev => {
-            const updated = prev.filter(n => n.id !== id);
-            setUnreadCount(updated.filter(n => !n.read).length);
-            return updated;
-        });
+        setNotifications(prev => prev.filter(n => n.id !== id));
     };
 
     const toggleNotifications = () => {
@@ -174,6 +192,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
                 markAsRead,
                 markAllAsRead,
                 deleteNotification,
+                refreshNotifications,
             }}
         >
             {children}
