@@ -1644,6 +1644,42 @@ export async function countWsdWorkspaceProgress(
   };
 }
 
+/**
+ * Per ambiguous word: how often it occurs in the workspace's documents and how
+ * many of those occurrences carry at least one annotation. Words that never
+ * occur in the text are left out. Joined in SQL so dictionary size never turns
+ * into bind parameters.
+ */
+export async function countWsdWordOccurrences(
+  workspaceId: string,
+): Promise<Array<{ word: string; occurrences: number; tagged: number }>> {
+  return prisma.$queryRaw<Array<{ word: string; occurrences: number; tagged: number }>>(Prisma.sql`
+    SELECT
+      m.w AS word,
+      COUNT(t.id)::int AS occurrences,
+      COUNT(t.id) FILTER (
+        WHERE EXISTS (SELECT 1 FROM wsd_annotation a WHERE a.token_id = t.id)
+      )::int AS tagged
+    FROM (
+      SELECT DISTINCT lower(word) AS w
+      FROM wsd_sense
+      WHERE workspace_id = ${workspaceId}::uuid
+    ) m
+    JOIN tokens t ON lower(t.form) = m.w
+    JOIN documents d ON d.id = t.document_id AND d.workspace_id = ${workspaceId}::uuid
+    GROUP BY m.w
+    ORDER BY m.w
+  `);
+}
+
+/** Distinct headwords in the workspace dictionary. */
+export async function countWsdDictionaryWords(workspaceId: string): Promise<number> {
+  const rows = await prisma.$queryRaw<Array<{ n: number }>>(Prisma.sql`
+    SELECT COUNT(DISTINCT lower(word))::int AS n FROM wsd_sense WHERE workspace_id = ${workspaceId}::uuid
+  `);
+  return rows[0]?.n ?? 0;
+}
+
 export async function deleteWsdSense(id: string): Promise<void> {
   // wsd_annotation.sense_id cascades.
   await prisma.wsd_sense.deleteMany({ where: { id } });

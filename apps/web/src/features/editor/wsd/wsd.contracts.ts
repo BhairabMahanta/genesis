@@ -61,3 +61,37 @@ export interface AmbiguousWordMatch {
     word: string;
     senseCount: number;
 }
+
+/** How often one ambiguous word occurs in the workspace's documents, and how many occurrences are tagged. */
+export interface WsdWordCoverage {
+    word: string;
+    occurrences: number;
+    tagged: number;
+}
+
+/** One annotation with the context needed to read it: document, sentence, sense and annotator. */
+export interface WsdAnnotatedOccurrence {
+    id: string;
+    documentId: string;
+    documentName: string;
+    sentenceIndex: number;
+    tokenIndex: number;
+    tokenId: string;
+    word: string;
+    sentenceText: string;
+    senseId: string;
+    senseLabel: string;
+    senseGloss: string | null;
+    senseExamples: string | null;
+    annotatorId: string;
+    annotatorName: string;
+    timestamp: string;
+}
+
+export interface WsdAnnotatedOverview {
+    /** Distinct headwords in the workspace dictionary, whether or not they occur in the text. */
+    dictionaryWords: number;
+    /** Only words that occur in the documents. */
+    words: WsdWordCoverage[];
+    annotations: WsdAnnotatedOccurrence[];
+}

@@ -4,6 +4,7 @@ import { ApiResponse } from '@/server/contracts/common';
 import { serverFetch } from '@/server/http';
 import {
   AmbiguousWordMatch,
+  WsdAnnotatedOverview,
   CreateWsdSenseRequest,
   ImportSensesResult,
   PaginatedSenses,
@@ -166,4 +167,11 @@ export async function unrejectSense(
     `/api/workspaces/${workspaceId}/wsd/rejections/${tokenId}/${senseId}`,
     { method: 'DELETE' },
   );
+}
+
+export async function getAnnotatedOverview(workspaceId: string): Promise<WsdAnnotatedOverview> {
+  const res = await serverFetch<ApiResponse<WsdAnnotatedOverview>>(
+    `/api/workspaces/${workspaceId}/wsd/annotated`,
+  );
+  return res.data;
 }

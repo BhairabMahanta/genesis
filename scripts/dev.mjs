@@ -14,6 +14,7 @@ import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { dockerConfigPath, repairDockerConfig } from "./docker-config.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const mode = process.argv[2] ?? "all";
@@ -147,6 +148,14 @@ function dockerDesktopPath() {
   return null;
 }
 
+// Docker Desktop re-adds a UTF-8 BOM to ~/.docker/config.json after it starts, which
+// breaks the CLI and the next Docker Desktop start (see scripts/docker-config.mjs).
+function fixDockerConfig() {
+  if (repairDockerConfig()) {
+    console.log(`[dev] removed the UTF-8 BOM Docker Desktop wrote to ${dockerConfigPath()}`);
+  }
+}
+
 async function startDockerDaemon(timeoutMs = 180_000) {
   console.log("[dev] Docker is not running; starting Docker Desktop...");
 
@@ -194,6 +203,11 @@ async function ensureLocalDatabase() {
     console.log("[dev] Docker bootstrap off; using DATABASE_URL as configured.");
     return;
   }
+  // Before any docker call: a BOM here stops Docker Desktop's engine from starting.
+  fixDockerConfig();
+  // Docker Desktop rewrites the file shortly after it starts, so keep undoing that
+  // while `pnpm dev` runs; the next Docker start then works without a manual fix.
+  setInterval(fixDockerConfig, 30_000).unref();
   if (!docker(["--version"]).ok) {
     warn("Docker CLI not found, skipping the database container.");
     warn("Install Docker Desktop, or set DEV_DOCKER=false and run PostgreSQL yourself.");
@@ -233,6 +247,7 @@ async function ensureLocalDatabase() {
     }
   }
 
+  fixDockerConfig();
   console.log("[dev] applying migrations...");
   const migrated = docker(["compose", "run", "--rm", "--no-deps", "migrate"]);
   if (migrated.out) {

@@ -5,6 +5,7 @@ import {
   BookOpen,
   FileText,
   Home,
+  ListChecks,
   Settings as SettingsIcon,
   Tag,
   Users,
@@ -16,6 +17,7 @@ export type SidebarItem =
   | 'getting-started'
   | 'documents'
   | 'lexicon'
+  | 'annotated'
   | 'collaborators'
   | 'schema'
   | 'settings';
@@ -48,6 +50,7 @@ export function Sidebar({ workspace, activeSection, isAdmin, onChangeSection, on
           NAV_ITEMS[0],
           NAV_ITEMS[1],
           { id: 'lexicon', label: 'Sense Inventory', Icon: BookOpen },
+          { id: 'annotated', label: 'Annotated Words', Icon: ListChecks },
           ...NAV_ITEMS.slice(2),
         ]
       : NAV_ITEMS;

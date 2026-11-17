@@ -9,6 +9,7 @@ import {
   annotationsForDocument,
   annotationsForToken,
   createSense,
+  annotatedOverview,
   exportAnnotatedOccurrences,
   exportConsensus,
   exportPerAnnotator,
@@ -124,6 +125,10 @@ wsdRoutes.get(
     );
   },
 );
+
+wsdRoutes.get("/workspaces/:workspaceId/wsd/annotated", authMiddleware, async (c) => {
+  return c.json(success(await annotatedOverview(needParam(c, "workspaceId"), c.get("userId"))), 200);
+});
 
 wsdRoutes.post("/workspaces/:workspaceId/wsd/rejections", authMiddleware, async (c) => {
   const input = parseOrThrow(rejectSenseSchema, await c.req.json());

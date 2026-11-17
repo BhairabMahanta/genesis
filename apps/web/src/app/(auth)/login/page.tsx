@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import { Eye, EyeOff } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Button } from '@/components/ui/button';
@@ -18,6 +19,7 @@ export default function LoginPage() {
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading, login } = useAuth();
   const [submitError, setSubmitError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   const {
     register,
@@ -111,14 +113,25 @@ export default function LoginPage() {
               <Label htmlFor="password" className="text-slate-700 dark:text-slate-300 font-medium mb-2">
                 Password
               </Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Enter your password"
-                className="h-12 rounded-xl"
-                aria-invalid={!!errors.password}
-                {...register('password')}
-              />
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="Enter your password"
+                  className="h-12 rounded-xl pr-12"
+                  aria-invalid={!!errors.password}
+                  {...register('password')}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(v => !v)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
+                  className="absolute inset-y-0 right-0 flex w-12 items-center justify-center rounded-r-xl text-slate-500 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] dark:text-slate-400 dark:hover:text-slate-200"
+                >
+                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </div>
               {errors.password && (
                 <p className="mt-1 text-xs text-red-600 dark:text-red-400">{errors.password.message}</p>
               )}
