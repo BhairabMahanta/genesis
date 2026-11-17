@@ -343,7 +343,7 @@ With `DEV_DOCKER=auto`, the launcher runs `docker desktop start`; if that comman
 
 - Docker not installed: install Docker Desktop, or set `DEV_DOCKER=false` and use your own PostgreSQL.
 - Using your own PostgreSQL on `localhost:5432`: set `DEV_DOCKER=false`, otherwise the launcher tries to start the container on the same port.
-- Docker warnings such as `Error parsing config file (...\.docker\config.json)` refer to the user's Docker config, not this project; Docker still works.
+- `Error parsing config file (...\.docker\config.json): invalid character 'ï'`, or Docker Desktop refusing to start with "parsing docker CLI config file": Docker Desktop on Windows rewrites `~/.docker/config.json` with a UTF-8 byte-order mark shortly after it starts, and then cannot read it on its next start. Nothing in this project writes that file. `pnpm dev` removes the BOM before it touches Docker and every 30 seconds while it runs (keeping one `config.json.bom-backup`). If you start Docker Desktop by hand, run `pnpm docker:fix` first.
 
 ### Demo login fails or the demo workspace is missing
 

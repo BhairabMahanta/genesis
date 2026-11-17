@@ -49,6 +49,7 @@ pnpm --filter @genesis/api exec prisma generate
 `pnpm dev` runs `scripts/dev.mjs`, which:
 
 - starts Docker Desktop and the `genesis-db` container when `DATABASE_URL` points at `localhost:5432` (`DEV_DOCKER=auto`; the engine is started with `docker desktop start`, then the app is launched as a fallback);
+- removes the UTF-8 BOM that Docker Desktop on Windows writes into `~/.docker/config.json` (it otherwise blocks the next engine start), before any Docker call and every 30 s while running (`scripts/docker-config.mjs`, also `pnpm docker:fix`);
 - applies migrations with `docker compose run --rm migrate` (idempotent);
 - starts the API on **`http://localhost:8099`** and the web app on **`http://localhost:3000`**;
 - sets `NEXT_PUBLIC_API_URL`, `INTERNAL_API_URL`, and `CORS_ALLOWED_ORIGINS` for the children;
